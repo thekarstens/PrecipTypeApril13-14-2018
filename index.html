@@ -564,18 +564,15 @@ body.student-mode .bstatus { display:none !important; }
 
   // Use the same starting time as your case study controls:
   // 2018-04-14 12Z (7am Central daylight). We'll label it "CST" per your preference.
-  var startZ = new Date(Date.UTC(2018, 3, 13, 12, 0, 0)); // Apr 13, 2018 12Z
-  var endZ   = new Date(Date.UTC(2018, 3, 14, 0, 0, 0));  // Apr 14, 2018 00Z // 24h window; extend later if you want
+  var startZ = new Date(Date.UTC(2018, 3, 13, 12, 0, 0)); // Apr 13 12Z // months are 0-based; 3 = April
+  var endZ   = new Date(Date.UTC(2018, 3, 14, 0, 0, 0));  // Apr 14 00Zndow; extend later if you want
   var curZ = new Date(startZ.getTime());
 
-  // Composite radar geographic extent (NAD83 geographic). Shifted ~60mi south + ~15mi east for better fit.
-  // Base extent commonly used by IEM mosaics: lon -126..-66, lat 24..50
-  var SHIFT_LAT = -1.09; // south shift (~15mi extra)   // south
-  var SHIFT_LON = 0.49; // east shift (~15mi extra)   // east
-  var RADAR_BOUNDS = L.latLngBounds(
-    L.latLng(24 + SHIFT_LAT, -126 + SHIFT_LON),
-    L.latLng(50 + SHIFT_LAT,  -66 + SHIFT_LON)
-  );
+  // Composite radar is now served as IEM TMS tiles (no local PNGs required)
+  function iemTile(layerName, useCache){
+    var base = useCache ? "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/" : "https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/";
+    return base + encodeURIComponent(layerName) + "/{z}/{x}/{y}.png";
+  }
 
   // Local file pattern in your repo:
   // radar_frames/n0q_201804141200.png, etc
@@ -586,9 +583,23 @@ body.student-mode .bstatus { display:none !important; }
   function hhmm(d){
     return pad2(d.getUTCHours()) + pad2(d.getUTCMinutes());
   }
-  function radarUrlFor(d){
-    return "radar_frames/n0q_" + yyyymmdd(d) + hhmm(d) + ".png";
+  function radarLayerNameFor(d){
+    // IEM archived CONUS composite reflectivity tiles
+    return "ridge::USCOMP-N0Q-" + yyyymmdd(d) + hhmm(d);
   }
+  function ptypeLayerNameFor(d){
+    // HRRR reflectivity-with-precip-type tiles (F0000 = analysis at that timestamp)
+    return "hrrr::REFP-F0000-" + yyyymmdd(d) + hhmm(d);
+  }
+
+  function refdLayerNameFor(d){
+    // HRRR reflectivity tiles (no precip type ramp) – available back to 2017 archive start
+    return "hrrr::REFD-F0000-" + yyyymmdd(d) + hhmm(d);
+  }
+
+  // REFP (ptype ramp) was introduced in late 2024 and archive may not be backfilled for older dates.
+  // We'll try REFP; if the server returns 404s, we fall back to REFD automatically.
+  var ptypeFallbackActive = false;
 
   // Alerts file pattern you already have:
   // timeline_hourly/alerts_20180414_1500Z.geojson
@@ -873,11 +884,11 @@ setMode("student");
 // Radar opacity slider
 var radarOpacity = document.getElementById("radarOpacity");
 function applyRadarOpacity(){
-  if (!radarOpacity) return;
-  var v = parseInt(radarOpacity.value || "70", 10);
-  var op = Math.max(0.2, Math.min(1, v/100));
-  if (obsRadarOverlay && obsRadarEnabled) obsRadarOverlay.setOpacity(op);
-}
+    if (!obsRadarOverlay) return;
+    var rs = document.getElementById("radarOpacity");
+    if (rs){ obsRadarOpacity = Math.max(0.2, Math.min(1, parseInt(rs.value||"70",10)/100)); }
+    obsRadarOverlay.setOpacity(obsRadarOpacity);
+  }
 if (radarOpacity){
   radarOpacity.oninput = applyRadarOpacity;
 }
@@ -907,25 +918,15 @@ if (radarOpacity){
   });
 
   // ---------- Layers ----------
-
-  // ---------- Forecast precip type (HRRR REFP) ----------
-  // This uses IEM's archived tile service. Layer names look like:
-  //   hrrr::REFP-F0000-YYYYMMDDHHMI
-  // We'll keep F0000 (analysis) and switch timestamps as you step through time.
-  function iemTile(layerName, useCache){
-    var base = useCache
-      ? "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/"
-      : "https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/";
-    return base + encodeURIComponent(layerName) + "/{z}/{x}/{y}.png";
-  }
-  function ptypeLayerNameFor(d){
-    return "hrrr::REFP-F0000-" + yyyymmdd(d) + hhmm(d);
-  }
-  var ptypeTile = null;
-  var ptypeEnabled = false;
-
   var obsRadarOverlay = null;
   var obsRadarEnabled = true;
+  var ptypeOverlay = null;
+  var ptypeEnabled = false;
+
+  var obsRadarOpacity = 0.70;
+  var ptypeOpacity = 0.45;
+
+  true;
 
   var alertsLayer = L.geoJSON(null, {
     filter: function(f){
@@ -984,20 +985,9 @@ if (radarOpacity){
   // State boundary outline handled via GeoJSON (no labels)
 var overlays = {};
   overlays["Composite Radar (Observed)"] = L.layerGroup(); // placeholder group
-  overlays["Forecast Precip Type (HRRR)"] = L.layerGroup(); // placeholder group (tile layer managed below)
+  overlays["Forecast Precip Type (HRRR)"] = L.layerGroup(); // placeholder group
 // We'll manage radar ourselves but still expose a checkbox
   var lc = L.control.layers(null, overlays, { collapsed:false }).addTo(map);
-
-  // Create the HRRR precip-type tile layer (starts OFF)
-  map.createPane("ptypePane");
-  map.getPane("ptypePane").style.zIndex = 445; // just above radar overlay
-  ptypeTile = L.tileLayer(iemTile(ptypeLayerNameFor(curZ), false), {
-    pane: "ptypePane",
-    opacity: 0.55,
-    maxZoom: 12,
-    attribution: "IEM HRRR"
-  });
-
 
   // Remove any base-layer radio section if Leaflet created it empty
   setTimeout(function(){
@@ -1009,12 +999,12 @@ var overlays = {};
   map.on("overlayadd", function(e){
 
     if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
-    if (e.name === "Forecast Precip Type (HRRR)") { ptypeEnabled = true; updatePtype(); updateProductLabel(); }
+    if (e.name === "Forecast Precip Type (HRRR)") { ptypeEnabled = true; updatePtype(); }
   });
   map.on("overlayremove", function(e){
 
     if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
-    if (e.name === "Forecast Precip Type (HRRR)") { ptypeEnabled = false; if (ptypeTile){ map.removeLayer(ptypeTile); } updateProductLabel(); }
+    if (e.name === "Forecast Precip Type (HRRR)") { ptypeEnabled = false; if (ptypeOverlay){ map.removeLayer(ptypeOverlay); } }
   });
 
   // Ensure radar checkbox starts ON
@@ -1027,15 +1017,7 @@ var overlays = {};
         inputs[i].checked = true;
       }
     }
-  
-    // Keep precip-type OFF by default
-    for (var j=0;j<inputs.length;j++){
-      var label2 = inputs[j].parentElement && inputs[j].parentElement.textContent || "";
-      if (label2.indexOf("Forecast Precip Type") !== -1){
-        inputs[j].checked = false;
-      }
-    }
-})();
+  })();
 
   // ---------- Updaters ----------
   function setStatus(s){ /* hidden */ }
@@ -1046,38 +1028,47 @@ var overlays = {};
   function updateProductLabel(){
   var pl = document.getElementById("productLabel");
   if (!pl) return;
-  pl.textContent = (obsRadarEnabled && ptypeEnabled) ? "RADAR + PTYPE" : (obsRadarEnabled ? "RADAR" : (ptypeEnabled ? "PTYPE" : "MAP"));
+  pl.textContent = obsRadarEnabled ? "RADAR" : "MAP";
 }
 
   function updateRadar(){
     if (!obsRadarEnabled) return;
-    var url = radarUrlFor(curZ);
-
-    // Test-load the image before swapping overlay (avoids blank overlay on 404)
-    var img = new Image();
-    img.onload = function(){
-      if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); }
-      var op = 0.70; var rs = document.getElementById("radarOpacity"); if (rs){ op = Math.max(0.2, Math.min(1, parseInt(rs.value||"70",10)/100)); }
-      obsRadarOverlay = L.imageOverlay(url, RADAR_BOUNDS, { opacity: op, interactive:false });
-      obsRadarOverlay.addTo(map);
-      applyRadarOpacity();
-      setStatus("Radar: " + url);
-    };
-    img.onerror = function(){
-      setStatus("Radar missing: " + url + " (check /radar_frames/)");
-    };
-    img.src = url;
+    var layerName = radarLayerNameFor(curZ);
+    var url = iemTile(layerName, false);
+    if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); }
+    obsRadarOverlay = L.tileLayer(url, { opacity: obsRadarOpacity, zIndex: 350, maxZoom: 12 });
+    obsRadarOverlay.addTo(map);
   }
 
-
   function updatePtype(){
-    if (!ptypeTile) return;
     if (!ptypeEnabled) return;
+
+    // First attempt: REFP (precip-type ramp)
+    ptypeFallbackActive = false;
     var layerName = ptypeLayerNameFor(curZ);
     var url = iemTile(layerName, false);
-    // Swap the tiles to match the current step
-    ptypeTile.setUrl(url);
-    if (!map.hasLayer(ptypeTile)) ptypeTile.addTo(map);
+
+    if (ptypeOverlay){ map.removeLayer(ptypeOverlay); }
+
+    ptypeOverlay = L.tileLayer(url, { opacity: ptypeOpacity, zIndex: 360, maxZoom: 12 });
+
+    // If tiles 404 (common for older archive dates), fall back to REFD so students still get a forecast layer.
+    ptypeOverlay.on("tileerror", function(){
+      if (ptypeFallbackActive) return; // already switched
+      ptypeFallbackActive = true;
+
+      try { map.removeLayer(ptypeOverlay); } catch(e){}
+
+      var fallbackName = refdLayerNameFor(curZ);
+      var fallbackUrl = iemTile(fallbackName, false);
+
+      ptypeOverlay = L.tileLayer(fallbackUrl, { opacity: ptypeOpacity, zIndex: 360, maxZoom: 12 });
+      ptypeOverlay.addTo(map);
+
+      setStatus("HRRR precip-type not available for " + formatCentralLabel(curZ) + " → showing HRRR forecast reflectivity instead.");
+    });
+
+    ptypeOverlay.addTo(map);
   }
 
   function updateAlerts(){
