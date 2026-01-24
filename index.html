@@ -278,7 +278,7 @@ body.student-mode .bstatus { display:none !important; }
 }
 .top-lesson{font-weight:900;font-size:26px;white-space:nowrap}
 .top-sep{opacity:.65;font-weight:900}
-.top-question{font-weight:800;font-size:16px;letter-spacing:.2px;text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.top-question{font-weight:800;font-size:16px;letter-spacing:.2px;text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;flex:1 1 100%;text-align:center}
 .top-q-label{font-weight:900;text-transform:uppercase;letter-spacing:.6px}
 
 .banner-bottomline{
@@ -631,6 +631,21 @@ body.student-mode .bstatus { display:none !important; }
   }
   function radarUrlFor(d){
     return "radar_frames/n0q_" + yyyymmdd(d) + hhmm(d) + ".png";
+  }
+
+  // GFS snow forecast PNGs in repo (static frames)
+  // gfs_snow/gfs_20180411_00z_f96_snow_weatherbell.png
+  // gfs_snow/gfs_20180412_00z_f72_snow_weatherbell.png
+  // gfs_snow/gfs_20180413_00z_f48_snow_weatherbell.png
+  function gfsSnowUrlFor(d){
+    // Pick the most-relevant static forecast image for the current time.
+    // (We don't animate this yet; we just swap between a few key lead times.)
+    var t = d.getTime();
+    var t13 = Date.UTC(2018,3,13,0,0,0); // Apr 13 00Z
+    var t12 = Date.UTC(2018,3,12,0,0,0); // Apr 12 00Z
+    if (t >= t13) return "gfs_snow/gfs_20180413_00z_f48_snow_weatherbell.png";
+    if (t >= t12) return "gfs_snow/gfs_20180412_00z_f72_snow_weatherbell.png";
+    return "gfs_snow/gfs_20180411_00z_f96_snow_weatherbell.png";
   }
 
   // Alerts file pattern you already have:
@@ -1017,6 +1032,10 @@ if (radarOpacity){
   var obsRadarOverlay = null;
   var obsRadarEnabled = true;
 
+  // GFS Snow Forecast overlay (static PNG swapper)
+  var gfsSnowOverlay = null;
+  var gfsSnowEnabled = false;
+
   var alertsLayer = L.geoJSON(null, {
     filter: function(f){
       const p = (f && f.properties) ? f.properties : {};
@@ -1074,6 +1093,8 @@ if (radarOpacity){
   // State boundary outline handled via GeoJSON (no labels)
 var overlays = {};
   overlays["Composite Radar (Observed)"] = L.layerGroup(); // placeholder group
+
+  overlays["GFS Snow Forecast"] = L.layerGroup(); // checkbox only; overlay managed manually
 // We'll manage radar ourselves but still expose a checkbox
   var lc = L.control.layers(null, overlays, { collapsed:false }).addTo(map);
 
@@ -1087,10 +1108,12 @@ var overlays = {};
   map.on("overlayadd", function(e){
 
     if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
+    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
   });
   map.on("overlayremove", function(e){
 
     if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
+    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
   });
 
   // Ensure radar checkbox starts ON
@@ -1151,7 +1174,28 @@ var overlays = {};
     img.src = url;
   }
 
-  function updateAlerts(){
+  
+  function updateGfsSnow(){
+    if (!gfsSnowEnabled) return;
+
+    var url = gfsSnowUrlFor(curZ);
+
+    // Preload to avoid flashing broken images
+    var img = new Image();
+    img.onload = function(){
+      if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); }
+      // Use same bounds as the rest of the CONUS layers for consistent alignment
+      gfsSnowOverlay = L.imageOverlay(url, RADAR_BOUNDS, { opacity: 0.75, interactive: false });
+      gfsSnowOverlay.addTo(map);
+      setStatus("GFS Snow: " + url);
+    };
+    img.onerror = function(){
+      setStatus("GFS Snow missing: " + url + " (check /gfs_snow/)");
+    };
+    img.src = url;
+  }
+
+function updateAlerts(){
     
     var url = alertsUrlFor(curZ);
     fetch(url).then(function(r){
@@ -1171,7 +1215,9 @@ var overlays = {};
   function updateAll(){
     setTimeLabel();
     updateRadar();
+    updateGfsSnow();
     updateAlerts();
+    updateProductLabel();
   }
 
   // ---------- Time controls ----------
