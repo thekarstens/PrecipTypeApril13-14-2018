@@ -6,9 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="./leaflet.css"/>
-<script src="./leaflet.js">
-var storyStarted = false; // do not auto-open storyboard
-</script>
+<script src="./leaflet.js"></script>
 
 <style>
 html, body { height:100%; margin:0; }
@@ -602,6 +600,8 @@ body.student-mode .bstatus { display:none !important; }
 <img id="brandLogo" src="./logo.png" alt="Weather Workshops" />
 <script>
 (function(){
+  var storyStarted = false; // do not auto-open storyboard
+
   // ---------- Config ----------
   var STEP_HOURS = 3;
 
