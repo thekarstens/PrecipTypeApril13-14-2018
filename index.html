@@ -690,7 +690,7 @@ body.student-mode .bstatus { display:none !important; }
   // Thicker state boundaries (no labels)
   (function(){
     map.createPane("stateOutlinePane");
-
+    map.getPane("stateOutlinePane").style.zIndex = 350;
 // --- Zoom-based "TV style" city labels (keep it clean) ---
 const cityLabelLayer = L.layerGroup().addTo(map);
 const cityLabelTiers = {
@@ -1130,45 +1130,49 @@ function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 
 // Smooth color ramp for temperature (F)
 function tempColor(tF){
-  // Blizzard-friendly range. Adjust later if you want.
-  var t0 = -10, t1 = 40;
-  var x = clamp((tF - t0) / (t1 - t0), 0, 1);
-
+  // WeatherBell-ish temperature ramp (F): purple/blue -> cyan/green -> yellow/orange -> red/magenta
   var stops = [
-    // "WeatherBell-ish" high-contrast ramp (cold -> warm)
-    {x:0.00, c:[ 70,  0,120]},  // purple (very cold)
-    {x:0.15, c:[  0, 50,170]},  // deep blue
-    {x:0.30, c:[  0,160,220]},  // cyan
-    {x:0.45, c:[  0,200,120]},  // green
-    {x:0.60, c:[255,235, 80]},  // yellow
-    {x:0.75, c:[255,150, 60]},  // orange
-    {x:0.90, c:[235, 60, 60]},  // red
-    {x:1.00, c:[170,  0,  0]}   // deep red
+    [-30, [120,  0,140]],  // purple
+    [-10, [ 40, 60,200]],  // deep blue
+    [  0, [  0,140,220]],  // blue-cyan
+    [ 10, [  0,200,180]],  // teal/green
+    [ 20, [120,240,120]],  // green
+    [ 32, [255,230, 90]],  // yellow (freezing highlight)
+    [ 40, [255,180, 70]],  // orange
+    [ 50, [255,120, 60]],  // deeper orange
+    [ 60, [235, 60, 60]],  // red
+    [ 80, [180,  0, 60]]   // magenta-red
   ];
+  // clamp outside range
+  if (tF <= stops[0][0]) return "rgb(" + stops[0][1].join(",") + ")";
+  if (tF >= stops[stops.length-1][0]) return "rgb(" + stops[stops.length-1][1].join(",") + ")";
 
-  for (var k=0; k<stops.length-1; k++){
-    var a = stops[k], b = stops[k+1];
-    if (x >= a.x && x <= b.x){
-      var tt = (x - a.x) / (b.x - a.x);
-      var r = Math.round(lerp(a.c[0], b.c[0], tt));
-      var g = Math.round(lerp(a.c[1], b.c[1], tt));
-      var bb = Math.round(lerp(a.c[2], b.c[2], tt));
+  for (var i=0; i<stops.length-1; i++){
+    var aT = stops[i][0], bT = stops[i+1][0];
+    if (tF >= aT && tF <= bT){
+      var t = (tF - aT) / (bT - aT);
+      var a = stops[i][1], b = stops[i+1][1];
+      var r = Math.round(lerp(a[0], b[0], t));
+      var g = Math.round(lerp(a[1], b[1], t));
+      var bb = Math.round(lerp(a[2], b[2], t));
       return "rgb(" + r + "," + g + "," + bb + ")";
     }
   }
-  return "rgb(0,60,170)";
+  return "rgb(40,60,200)";
 }
 
 function radiusForZoom(z){
-  // Keep overlap even when zoomed in (more "continuous field")
-  if (z <= 4) return 10;
-  if (z <= 5) return 10;
-  if (z <= 6) return 9;
-  if (z <= 7) return 9;
-  if (z <= 8) return 8;
-  if (z <= 9) return 8;
-  if (z <= 10) return 7;
-  return 6;
+  // Keep overlap even when zoomed in (continuous "field")
+  if (z <= 4) return 12;
+  if (z <= 5) return 12;
+  if (z <= 6) return 11;
+  if (z <= 7) return 11;
+  if (z <= 8) return 10;
+  if (z <= 9) return 10;
+  if (z <= 10) return 9;
+  if (z <= 11) return 9;
+  if (z <= 12) return 8;
+  return 7;
 }
 
 function updateHrrrTempRadius(){
@@ -1209,27 +1213,35 @@ pointToLayer: function(feature, latlng){
   var r = radiusForZoom(map.getZoom());
   var c = tempColor(t);
 
-  // Two-layer dot: soft "field" base + sharp center dot (more scientific, still readable)
+  // Base "blob" for gradient field
   var base = L.circleMarker(latlng, {
     radius: r,
+    weight: 0,
+    fillColor: c,
+    fillOpacity: 0.70
+  });
+
+  // Core dot for "sample point" feel (kept subtle so it doesn't look too polka-dot)
+  var core = L.circleMarker(latlng, {
+    radius: Math.max(2, Math.round(r * 0.25)),
     weight: 0,
     fillColor: c,
     fillOpacity: 0.55
   });
 
-  var core = L.circleMarker(latlng, {
-    radius: Math.max(2, Math.round(r * 0.35)),
-    weight: 0.5,
-    color: "rgba(0,0,0,0.15)",
-    fillColor: c,
-    fillOpacity: 0.90
-  });
-
-  return L.layerGroup([base, core]);
+  var grp = L.layerGroup([base, core]);
+  // stash references so we can resize + bind tooltips correctly
+  grp._base = base;
+  grp._core = core;
+  return grp;
 },
         onEachFeature: function(feature, layer){
           var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
-          layer.bindTooltip(t + "°F", { sticky: true });
+          if (layer && layer._core && layer._core.bindTooltip){
+            layer._core.bindTooltip(t + "°F", { sticky: true });
+          } else if (layer && layer.bindTooltip){
+            layer.bindTooltip(t + "°F", { sticky: true });
+          }
         }
       }).addTo(hrrrTempLayer);
       // If HRRR layer is currently visible, show outlines too
