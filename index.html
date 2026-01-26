@@ -535,6 +535,36 @@ body.student-mode .bstatus { display:none !important; }
   border:0;
 }
 
+
+/* HRRR pixel query tooltip */
+.leaflet-tooltip.hrrr-tip{
+  background: rgba(255,255,255,0.96);
+  border: 2px solid rgba(0,0,0,0.85);
+  color: #111;
+  font: 900 16px/1.1 Arial, sans-serif;
+  padding: 8px 12px;
+  border-radius: 10px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+}
+.leaflet-tooltip.hrrr-tip:before{ border-top-color: rgba(0,0,0,0.85); }
+
+/* Click-to-query popup (big, bold) */
+.leaflet-popup.hrrr-pixel-popup .leaflet-popup-content-wrapper{
+  background: rgba(255,255,255,0.97);
+  border: 2px solid rgba(0,0,0,0.9);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+}
+.leaflet-popup.hrrr-pixel-popup .leaflet-popup-content{
+  margin: 10px 14px;
+  font: 900 18px/1.15 Arial, sans-serif;
+  color:#111;
+}
+.leaflet-popup.hrrr-pixel-popup .leaflet-popup-tip{
+  background: rgba(255,255,255,0.97);
+  border: 2px solid rgba(0,0,0,0.9);
+}
+
 </style>
 </head>
 
@@ -1081,6 +1111,44 @@ var overlays = {};
 var hrrrTempGeo = null;
 var hrrrCanvas = L.canvas({ padding: 0.5 });
 
+// Store HRRR points for click-to-query
+var hrrrPts = [];
+var hrrrPixelPopup = L.popup({ closeButton:false, autoPan:false, className:"hrrr-pixel-popup" });
+function buildHrrrPts(gj){
+  try{
+    hrrrPts = (gj.features||[]).map(function(f){
+      var coords = f.geometry && f.geometry.coordinates;
+      if (!coords) return null;
+      var lon = coords[0], lat = coords[1];
+      if (lon > 180) lon = lon - 360;
+      var t = (f.properties && f.properties.t_f != null) ? Math.round(Number(f.properties.t_f)) : null;
+      return (isFinite(lat) && isFinite(lon) && t!=null) ? {lat:lat, lon:lon, t:t} : null;
+    }).filter(Boolean);
+  }catch(e){ hrrrPts = []; }
+}
+function nearestHrrr(lat, lon){
+  if (!hrrrPts || !hrrrPts.length) return null;
+  var cosLat = Math.cos(lat * Math.PI/180);
+  var best = null, bestD = Infinity;
+  for (var i=0; i<hrrrPts.length; i++){
+    var p = hrrrPts[i];
+    var dx = (p.lon - lon) * cosLat;
+    var dy = (p.lat - lat);
+    var d2 = dx*dx + dy*dy;
+    if (d2 < bestD){ bestD = d2; best = p; }
+  }
+  return best;
+}
+// Click anywhere to query nearest HRRR gridpoint (only when HRRR layer is on)
+map.on("click", function(e){
+  if (!map.hasLayer(hrrrTempLayer)) return;
+  var n = nearestHrrr(e.latlng.lat, e.latlng.lng);
+  if (!n) return;
+  var html = "<div>" + n.t + "°F</div>";
+  hrrrPixelPopup.setLatLng(e.latlng).setContent(html).openOn(map);
+});
+
+
 function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 
@@ -1177,6 +1245,7 @@ function updateHrrrTempRadius(){
   fetch("./hrrr_t2m_20180414_12z_f00.geojson")
     .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(function(gj){
+      buildHrrrPts(gj);
       hrrrTempGeo = L.geoJSON(gj, {
         // IMPORTANT: convert 0..360 longitudes -> -180..180 for Leaflet
         coordsToLatLng: function(coords){
@@ -1215,11 +1284,11 @@ pointToLayer: function(feature, latlng){
   return grp;
 },
         onEachFeature: function(feature, layer){
-          var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
+          var t = (feature.properties && feature.properties.t_f != null) ? Math.round(Number(feature.properties.t_f)) : null;
           if (layer && layer._core && layer._core.bindTooltip){
-            layer._core.bindTooltip(t + "°F", { sticky: true });
+            layer._core.bindTooltip((t!=null ? (t + "°F") : "NA"), { sticky: true, className: "hrrr-tip" });
           } else if (layer && layer.bindTooltip){
-            layer.bindTooltip(t + "°F", { sticky: true });
+            layer.bindTooltip((t!=null ? (t + "°F") : "NA"), { sticky: true, className: "hrrr-tip" });
           }
         }
       }).addTo(hrrrTempLayer);
