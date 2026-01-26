@@ -1135,11 +1135,15 @@ function tempColor(tF){
   var x = clamp((tF - t0) / (t1 - t0), 0, 1);
 
   var stops = [
-    {x:0.00, c:[  0,  60,170]},  // deep blue
-    {x:0.35, c:[  0, 180,220]},  // cyan
-    {x:0.60, c:[255, 230, 90]},  // yellow
-    {x:0.80, c:[255, 140, 60]},  // orange
-    {x:1.00, c:[220,  40, 40]}   // red
+    // "WeatherBell-ish" high-contrast ramp (cold -> warm)
+    {x:0.00, c:[ 70,  0,120]},  // purple (very cold)
+    {x:0.15, c:[  0, 50,170]},  // deep blue
+    {x:0.30, c:[  0,160,220]},  // cyan
+    {x:0.45, c:[  0,200,120]},  // green
+    {x:0.60, c:[255,235, 80]},  // yellow
+    {x:0.75, c:[255,150, 60]},  // orange
+    {x:0.90, c:[235, 60, 60]},  // red
+    {x:1.00, c:[170,  0,  0]}   // deep red
   ];
 
   for (var k=0; k<stops.length-1; k++){
@@ -1186,8 +1190,6 @@ function updateHrrrTempRadius(){
   });
 }
 
-);
-}
 
 
   // Load once (GeoJSON must be in same folder as this index.html)
