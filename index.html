@@ -1156,22 +1156,14 @@ var overlays = {};
   // Toggle handler for layer control checkboxes
   map.on("overlayadd", function(e){
     if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
-    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = true; updateGfsSnow();     updateTemp();
-updateProductLabel(); }
+    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
     if (e.layer === tempLayer) { tempEnabled = true; updateTemp(); updateProductLabel(); }
   });
 
   map.on("overlayremove", function(e){
-    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
-    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
-    if (e.layer === tempLayer) { tempEnabled = false; updateTemp(); updateProductLabel(); }
-  });
+    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); 
 
-} updateProductLabel(); }
-    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
-  });
-
-  // Ensure radar checkbox starts ON
+// Ensure radar checkbox starts ON
   // Leaflet doesn't automatically check our placeholder group, so we force it:
   (function forceRadarChecked(){
     var inputs = document.querySelectorAll(".leaflet-control-layers-overlays input");
