@@ -689,7 +689,7 @@ body.student-mode .bstatus { display:none !important; }
     if (usStatesLoaded) return;
     usStatesLoaded = true;
 
-    fetch("us-states.geojson")
+    fetch("gz_2010_us_040_00_5m.json?v="+Date.now())
       .then(function(res){
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
@@ -706,7 +706,7 @@ body.student-mode .bstatus { display:none !important; }
       })
       .catch(function(err){
         // If GeoJSON missing, we just rely on tile fallback
-        console.log("us-states.geojson not loaded (using tile fallback):", err);
+        console.log("State GeoJSON not loaded (using tile fallback):", err);
       });
   }
 
