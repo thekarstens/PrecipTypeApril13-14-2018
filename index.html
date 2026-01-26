@@ -673,12 +673,12 @@ body.student-mode .bstatus { display:none !important; }
 
   // --- State boundaries / outlines (reliable tile overlay, no GeoJSON needed) ---
   map.createPane("lines");
-  map.getPane("lines").style.zIndex = 650; // above dots
+  map.getPane("lines").style.zIndex = 720; // above dots
   map.getPane("lines").style.pointerEvents = "none"; // keep clicks working
 
   var stateLinesLayer = L.tileLayer(
     "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places_Alternate/MapServer/tile/{z}/{y}/{x}",
-    { pane: "lines", opacity: 0.85 }
+    { pane: "lines", opacity: 0.95 }
   );
 
 
@@ -1035,6 +1035,7 @@ var overlays = {};
 
 // --- HRRR TEMP "blob map" styling helpers (Option 1) ---
 var hrrrTempGeo = null;
+var hrrrCanvas = L.canvas({ padding: 0.5 });
 
 function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
@@ -1054,17 +1055,26 @@ function mix(c1,c2,t){
 // Smooth, WeatherBell-style temperature ramp (°F)
 // Anchors: 20s deep blue -> 30s lighter blue -> 40s dark green -> 50s light green -> 60s yellow -> 70s orange -> 80s red -> 90s magenta
 var TEMP_STOPS = [
-  {t:  0, c: "#3b1b7a"},
-  {t: 10, c: "#1f3f9a"},
-  {t: 20, c: "#08306b"}, // dark blue
-  {t: 30, c: "#6baed6"}, // light blue
-  {t: 40, c: "#006d2c"}, // dark green
-  {t: 50, c: "#74c476"}, // light green
-  {t: 60, c: "#ffeb3b"}, // yellow
-  {t: 70, c: "#ff9800"}, // orange
-  {t: 80, c: "#e31a1c"}, // red
-  {t: 90, c: "#c51b8a"}  // magenta
+  // WeatherBell-ish temperature ramp (°F): purples -> blues -> cyans -> greens -> yellows -> oranges -> reds -> pinks
+  {t:-30, c:"#3b0a5e"},
+  {t:-20, c:"#54278f"},
+  {t:-10, c:"#1f3f9a"},
+  {t:  0, c:"#08519c"},
+  {t: 10, c:"#3182bd"},
+  {t: 20, c:"#6baed6"},
+  {t: 30, c:"#41b6c4"},
+  {t: 40, c:"#1a9850"},
+  {t: 50, c:"#66bd63"},
+  {t: 60, c:"#d9ef8b"},
+  {t: 70, c:"#fee08b"},
+  {t: 80, c:"#fdae61"},
+  {t: 90, c:"#f46d43"},
+  {t:100, c:"#d73027"},
+  {t:110, c:"#c51b8a"},
+  {t:120, c:"#7a0177"}
 ].map(s => ({ t:s.t, c: hexToRgb(s.c) }));
+
+
 
 function tempColor(tF){
   if (!isFinite(tF)) return "rgba(0,0,0,0)";
@@ -1076,7 +1086,7 @@ function tempColor(tF){
     if (tF >= a.t && tF <= b.t){
       var tt = (tF - a.t) / (b.t - a.t);
       // Slight gamma curve to boost contrast around gradients
-      tt = Math.pow(tt, 0.85);
+      tt = Math.pow(tt, 0.70);
       return rgbToCss(mix(a.c, b.c, tt));
     }
   }
@@ -1084,17 +1094,17 @@ function tempColor(tF){
 }
 
 function radiusForZoom(z){
-  // Keep overlap even when zoomed in (continuous "field")
-  if (z <= 4) return 14;
-  if (z <= 5) return 14;
-  if (z <= 6) return 13;
-  if (z <= 7) return 13;
-  if (z <= 8) return 12;
-  if (z <= 9) return 12;
-  if (z <= 10) return 11;
-  if (z <= 11) return 11;
-  if (z <= 12) return 10;
-  return 10; // keep local view readable
+  // Goal: keep dots overlapping so there are NO "holes" when you zoom in.
+  // HRRR 3-km grid spacing means we need relatively big radii at higher zooms.
+  if (z <= 4) return 18;
+  if (z <= 5) return 18;
+  if (z <= 6) return 20;
+  if (z <= 7) return 22;
+  if (z <= 8) return 24;
+  if (z <= 9) return 26;
+  if (z <= 10) return 28;
+  if (z <= 11) return 30;
+  return 32;
 }
 
 
@@ -1138,15 +1148,17 @@ pointToLayer: function(feature, latlng){
 
   // Base "blob" for gradient field
   var base = L.circleMarker(latlng, {
+    renderer: hrrrCanvas,
     radius: r,
     weight: 0,
     fillColor: c,
-    fillOpacity: 0.70
+    fillOpacity: 0.35
   });
 
   // Core dot for "sample point" feel (kept subtle so it doesn't look too polka-dot)
   var core = L.circleMarker(latlng, {
-    radius: Math.max(2, Math.round(r * 0.25)),
+    renderer: hrrrCanvas,
+    radius: Math.max(2, Math.round(r * 0.18)),
     weight: 0,
     fillColor: c,
     fillOpacity: 0.55
