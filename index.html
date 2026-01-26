@@ -1089,61 +1089,44 @@ if (radarOpacity){
   alertsLayer.addTo(map);
   var alertsEnabled = true;
 
-  
-
-  // --- HRRR Temp GeoJSON (single hour test) ---
-  var tempEnabled = false;
-  var tempLayer = L.layerGroup();   // toggled in Layer Control
-  var tempGeoLayer = null;          // actual GeoJSON points
-
-  function loadTempOnce(){
-    if (tempGeoLayer) return; // already loaded
-    fetch("./hrrr_t2m_20180414_12z_f00.geojson")
-      .then(r => { if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(gj => {
-        tempGeoLayer = L.geoJSON(gj, {
-          // IMPORTANT: convert lon 0..360 -> -180..180 if needed
-          coordsToLatLng: (coords) => {
-            let lon = coords[0], lat = coords[1];
-            if (lon > 180) lon = lon - 360;
-            return L.latLng(lat, lon);
-          },
-          pointToLayer: (f, latlng) => {
-            const t = (f.properties && f.properties.t_f != null) ? Number(f.properties.t_f) : NaN;
-
-            // simple bins (tweak later)
-            let fill = "#2b83ba";
-            if (t >= 32) fill = "#ffd166";
-            if (t >= 50) fill = "#fdae61";
-            if (t >= 70) fill = "#ef476f";
-
-            return L.circleMarker(latlng, { radius: 3, weight: 0, fillColor: fill, fillOpacity: 0.70 });
-          },
-          onEachFeature: (f, layer) => {
-            const t = (f.properties && f.properties.t_f != null) ? Number(f.properties.t_f).toFixed(1) : "NA";
-            layer.bindTooltip(`${t}°F`, { sticky: true });
-          }
-        });
-
-        if (tempEnabled) tempGeoLayer.addTo(tempLayer);
-      })
-      .catch(err => console.log("Temp load failed:", err));
-  }
-
-  function updateTemp(){
-    loadTempOnce();
-    tempLayer.clearLayers();
-    if (tempEnabled && tempGeoLayer) tempGeoLayer.addTo(tempLayer);
-  }
-
-// Layer control (NO extra base layer picker)
+  // Layer control (NO extra base layer picker)
   // State boundary outline handled via GeoJSON (no labels)
 var overlays = {};
   overlays["Composite Radar (Observed)"] = L.layerGroup(); // placeholder group
 
   overlays["GFS Snow Forecast"] = L.layerGroup(); // checkbox only; overlay managed manually
 
-  overlays["HRRR Temp (2m)"] = tempLayer; // GeoJSON points test
+  // HRRR Temp GeoJSON (real layer group; Leaflet handles show/hide)
+  var hrrrTempLayer = L.layerGroup();
+  overlays["HRRR Temp (2m)"] = hrrrTempLayer;
+
+  // Load once (GeoJSON must be in same folder as this index.html)
+  fetch("./hrrr_t2m_20180414_12z_f00.geojson")
+    .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function(gj){
+      L.geoJSON(gj, {
+        // IMPORTANT: convert 0..360 longitudes -> -180..180 for Leaflet
+        coordsToLatLng: function(coords){
+          var lon = coords[0], lat = coords[1];
+          if (lon > 180) lon = lon - 360;
+          return L.latLng(lat, lon);
+        },
+        pointToLayer: function(feature, latlng){
+          var t = feature.properties && feature.properties.t_f;
+          var fill = "#2b83ba";
+          if (t >= 32) fill = "#ffd166";
+          if (t >= 50) fill = "#fdae61";
+          if (t >= 70) fill = "#ef476f";
+          return L.circleMarker(latlng, { radius: 3, weight: 0, fillColor: fill, fillOpacity: 0.70 });
+        },
+        onEachFeature: function(feature, layer){
+          var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
+          layer.bindTooltip(t + "°F", { sticky: true });
+        }
+      }).addTo(hrrrTempLayer);
+    })
+    .catch(function(err){ console.log("HRRR temp load failed:", err); });
+
 // We'll manage radar ourselves but still expose a checkbox
   var lc = L.control.layers(null, overlays, { collapsed:false }).addTo(map);
 
@@ -1155,15 +1138,17 @@ var overlays = {};
 
   // Toggle handler for layer control checkboxes
   map.on("overlayadd", function(e){
-    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
-    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
-    if (e.layer === tempLayer) { tempEnabled = true; updateTemp(); updateProductLabel(); }
+
+    if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
+    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
+  });
+  map.on("overlayremove", function(e){
+
+    if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
+    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
   });
 
-  map.on("overlayremove", function(e){
-    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); 
-
-// Ensure radar checkbox starts ON
+  // Ensure radar checkbox starts ON
   // Leaflet doesn't automatically check our placeholder group, so we force it:
   (function forceRadarChecked(){
     var inputs = document.querySelectorAll(".leaflet-control-layers-overlays input");
