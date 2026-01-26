@@ -671,104 +671,15 @@ body.student-mode .bstatus { display:none !important; }
   // ---------- Map ----------
   var map = L.map("map", { zoomControl:true }).setView([43.55, -96.73], 6);
 
-  // State outlines (shown only when HRRR Temp is enabled)
-  var stateOutlineEnabled = false;
-  var stateOutlineLayer = L.layerGroup();
-  var stateOutlineGeo = null;
+  // --- State boundaries / outlines (reliable tile overlay, no GeoJSON needed) ---
+  map.createPane("lines");
+  map.getPane("lines").style.zIndex = 650; // above dots
+  map.getPane("lines").style.pointerEvents = "none"; // keep clicks working
 
-  function updateStateOutlines(){
-    if (stateOutlineEnabled){
-      if (!map.hasLayer(stateOutlineLayer)) stateOutlineLayer.addTo(map);
-      stateOutlineLayer.clearLayers();
-      if (stateOutlineGeo) stateOutlineGeo.addTo(stateOutlineLayer);
-    } else {
-      stateOutlineLayer.clearLayers();
-      if (map.hasLayer(stateOutlineLayer)) map.removeLayer(stateOutlineLayer);
-    }
-  }
-  var zl = document.getElementById("zoomLabel"); if (zl) zl.textContent = map.getZoom();
-  // Thicker state boundaries (no labels)
-  (function(){
-    map.createPane("stateOutlinePane");
-    map.getPane("stateOutlinePane").style.zIndex = 350;
-// --- Zoom-based "TV style" city labels (keep it clean) ---
-const cityLabelLayer = L.layerGroup().addTo(map);
-const cityLabelTiers = {
-  big: [
-    {name:"Sioux Falls", lat:43.55, lon:-96.73},
-    {name:"Minneapolis", lat:44.9778, lon:-93.2650},
-    {name:"Omaha", lat:41.2565, lon:-95.9345},
-    {name:"Des Moines", lat:41.5868, lon:-93.6250}
-  ],
-  medium: [
-    {name:"Rapid City", lat:44.0805, lon:-103.2310},
-    {name:"Denver", lat:39.7392, lon:-104.9903},
-    {name:"Madison", lat:43.0731, lon:-89.4012},
-    {name:"Kansas City", lat:39.0997, lon:-94.5786}
-  ],
-  small: [
-    {name:"Brookings", lat:44.3114, lon:-96.7984},
-    {name:"Yankton", lat:42.8711, lon:-97.3973},
-    {name:"Aberdeen", lat:45.4647, lon:-98.4865},
-    {name:"Norfolk", lat:42.0283, lon:-97.4170},
-    {name:"Sioux City", lat:42.4990, lon:-96.4003},
-    {name:"Mason City", lat:43.1536, lon:-93.2010},
-    {name:"Rochester", lat:44.0121, lon:-92.4802}
-  ]
-};
-
-function makeTvCityLabel(c){
-  return L.circleMarker([c.lat, c.lon], {
-    radius:8,
-    color:"#ffffff",
-    weight:2,
-    fillColor:"#2fa4ff",
-    fillOpacity:1
-  }).bindTooltip(c.name, {
-    permanent:true,
-    direction:"right",
-    offset:[10,0],
-    className:"tv-city-label"
-  });
-}
-
-const cityMarkers = { big: [], medium: [], small: [] };
-Object.keys(cityLabelTiers).forEach(tier => {
-  cityLabelTiers[tier].forEach(c => cityMarkers[tier].push(makeTvCityLabel(c)));
-});
-
-function refreshCityLabels(){
-  const z = map.getZoom();
-  cityLabelLayer.clearLayers();
-
-  // Wide view: only BIG cities
-  cityMarkers.big.forEach(m => cityLabelLayer.addLayer(m));
-
-  // Add MEDIUM cities when zoomed in a bit
-  if (z >= 6){
-    cityMarkers.medium.forEach(m => cityLabelLayer.addLayer(m));
-  }
-  // Add SMALL towns when zoomed further
-  if (z >= 7){
-    cityMarkers.small.forEach(m => cityLabelLayer.addLayer(m));
-  }
-}
-map.on("zoomend", refreshCityLabels);
-refreshCityLabels();
-
-
-    map.getPane("stateOutlinePane").style.zIndex = 460;
-
-    const outlineUrl = "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/us-states.json";
-    fetch(outlineUrl).then(r => r.json()).then(gj => {
-      stateOutlineGeo = L.geoJSON(gj, {
-        pane: "stateOutlinePane",
-        interactive: false,
-        style: { color: "#555", weight: 2.5, opacity: 0.7, fillOpacity: 0 }
-      });
-      updateStateOutlines();
-    }).catch(()=>{/* ignore if offline */});
-})();
+  var stateLinesLayer = L.tileLayer(
+    "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places_Alternate/MapServer/tile/{z}/{y}/{x}",
+    { pane: "lines", opacity: 0.85 }
+  );
 
 
   // Clean base map (no labels)
@@ -1121,20 +1032,6 @@ var overlays = {};
   var hrrrTempLayer = L.layerGroup();
   overlays["HRRR Temp (2m)"] = hrrrTempLayer;
 
-  // --- Simple state outlines (inline) ---
-  // These are simplified "box" outlines for teaching context (fast + reliable).
-  var statesLayer = L.layerGroup();
-
-  var STATES_OUTLINES_GEOJSON = {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"name": "South Dakota"}, "geometry": {"type": "Polygon", "coordinates": [[[-104.06, 42.48], [-96.44, 42.48], [-96.44, 45.95], [-104.06, 45.95], [-104.06, 42.48]]]}}, {"type": "Feature", "properties": {"name": "North Dakota"}, "geometry": {"type": "Polygon", "coordinates": [[[-104.05, 45.94], [-96.55, 45.94], [-96.55, 49.0], [-104.05, 49.0], [-104.05, 45.94]]]}}, {"type": "Feature", "properties": {"name": "Minnesota"}, "geometry": {"type": "Polygon", "coordinates": [[[-97.24, 43.5], [-89.49, 43.5], [-89.49, 49.38], [-97.24, 49.38], [-97.24, 43.5]]]}}, {"type": "Feature", "properties": {"name": "Iowa"}, "geometry": {"type": "Polygon", "coordinates": [[[-96.64, 40.37], [-90.14, 40.37], [-90.14, 43.5], [-96.64, 43.5], [-96.64, 40.37]]]}}, {"type": "Feature", "properties": {"name": "Nebraska"}, "geometry": {"type": "Polygon", "coordinates": [[[-104.05, 40.0], [-95.31, 40.0], [-95.31, 43.0], [-104.05, 43.0], [-104.05, 40.0]]]}}, {"type": "Feature", "properties": {"name": "Wyoming"}, "geometry": {"type": "Polygon", "coordinates": [[[-111.05, 41.0], [-104.05, 41.0], [-104.05, 45.0], [-111.05, 45.0], [-111.05, 41.0]]]}}, {"type": "Feature", "properties": {"name": "Montana"}, "geometry": {"type": "Polygon", "coordinates": [[[-116.05, 44.36], [-104.05, 44.36], [-104.05, 49.0], [-116.05, 49.0], [-116.05, 44.36]]]}}, {"type": "Feature", "properties": {"name": "Colorado"}, "geometry": {"type": "Polygon", "coordinates": [[[-109.05, 37.0], [-102.05, 37.0], [-102.05, 41.0], [-109.05, 41.0], [-109.05, 37.0]]]}}, {"type": "Feature", "properties": {"name": "Kansas"}, "geometry": {"type": "Polygon", "coordinates": [[[-102.05, 37.0], [-94.61, 37.0], [-94.61, 40.0], [-102.05, 40.0], [-102.05, 37.0]]]}}, {"type": "Feature", "properties": {"name": "Missouri"}, "geometry": {"type": "Polygon", "coordinates": [[[-95.77, 36.0], [-89.1, 36.0], [-89.1, 40.61], [-95.77, 40.61], [-95.77, 36.0]]]}}, {"type": "Feature", "properties": {"name": "Wisconsin"}, "geometry": {"type": "Polygon", "coordinates": [[[-92.89, 42.49], [-86.81, 42.49], [-86.81, 47.31], [-92.89, 47.31], [-92.89, 42.49]]]}}, {"type": "Feature", "properties": {"name": "Illinois"}, "geometry": {"type": "Polygon", "coordinates": [[[-91.51, 36.97], [-87.5, 36.97], [-87.5, 42.51], [-91.51, 42.51], [-91.51, 36.97]]]}}]};
-
-
-  var statesGeo = L.geoJSON(STATES_OUTLINES_GEOJSON, {
-    style: function(){
-      return { color: "rgba(0,0,0,0.55)", weight: 1.5, fillOpacity: 0 };
-    }
-  });
-
-
 
 // --- HRRR TEMP "blob map" styling helpers (Option 1) ---
 var hrrrTempGeo = null;
@@ -1143,32 +1040,61 @@ function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 
 // Smooth color ramp for temperature (F)
+function hexToRgb(hex){
+  hex = hex.replace("#","");
+  if (hex.length===3){ hex = hex.split("").map(c=>c+c).join(""); }
+  var n = parseInt(hex,16);
+  return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+}
+function rgbToCss(c){ return "rgb(" + c.r + "," + c.g + "," + c.b + ")"; }
+function mix(c1,c2,t){
+  return { r: Math.round(lerp(c1.r,c2.r,t)), g: Math.round(lerp(c1.g,c2.g,t)), b: Math.round(lerp(c1.b,c2.b,t)) };
+}
+
+// Smooth, WeatherBell-style temperature ramp (°F)
+// Anchors: 20s deep blue -> 30s lighter blue -> 40s dark green -> 50s light green -> 60s yellow -> 70s orange -> 80s red -> 90s magenta
+var TEMP_STOPS = [
+  {t:  0, c: "#3b1b7a"},
+  {t: 10, c: "#1f3f9a"},
+  {t: 20, c: "#08306b"}, // dark blue
+  {t: 30, c: "#6baed6"}, // light blue
+  {t: 40, c: "#006d2c"}, // dark green
+  {t: 50, c: "#74c476"}, // light green
+  {t: 60, c: "#ffeb3b"}, // yellow
+  {t: 70, c: "#ff9800"}, // orange
+  {t: 80, c: "#e31a1c"}, // red
+  {t: 90, c: "#c51b8a"}  // magenta
+].map(s => ({ t:s.t, c: hexToRgb(s.c) }));
+
 function tempColor(tF){
-  // High-contrast, WeatherBell-like DISCRETE bins (F)
-  // 20s dark blue, 30s light blue, 40s dark green, 50s light green, 60s yellow, 70s orange, 80s red
-  if (tF < 20) return "rgb(8,48,107)";        // very cold: navy
-  if (tF < 30) return "rgb(8,81,156)";        // 20s: dark blue
-  if (tF < 40) return "rgb(107,174,214)";     // 30s: light blue
-  if (tF < 50) return "rgb(0,109,44)";        // 40s: dark green
-  if (tF < 60) return "rgb(116,196,118)";     // 50s: light green
-  if (tF < 70) return "rgb(255,235,59)";      // 60s: yellow
-  if (tF < 80) return "rgb(255,152,0)";       // 70s: orange
-  if (tF < 90) return "rgb(227,26,28)";       // 80s: red
-  return "rgb(197,27,138)";                   // 90s+: magenta
+  if (!isFinite(tF)) return "rgba(0,0,0,0)";
+  // Clamp into range
+  tF = clamp(tF, TEMP_STOPS[0].t, TEMP_STOPS[TEMP_STOPS.length-1].t);
+  // Find bracketing stops
+  for (var i=0; i<TEMP_STOPS.length-1; i++){
+    var a = TEMP_STOPS[i], b = TEMP_STOPS[i+1];
+    if (tF >= a.t && tF <= b.t){
+      var tt = (tF - a.t) / (b.t - a.t);
+      // Slight gamma curve to boost contrast around gradients
+      tt = Math.pow(tt, 0.85);
+      return rgbToCss(mix(a.c, b.c, tt));
+    }
+  }
+  return rgbToCss(TEMP_STOPS[TEMP_STOPS.length-1].c);
 }
 
 function radiusForZoom(z){
   // Keep overlap even when zoomed in (continuous "field")
-  if (z <= 4) return 12;
-  if (z <= 5) return 12;
-  if (z <= 6) return 11;
-  if (z <= 7) return 11;
-  if (z <= 8) return 10;
-  if (z <= 9) return 10;
-  if (z <= 10) return 9;
-  if (z <= 11) return 9;
-  if (z <= 12) return 8;
-  return 7; // still large locally
+  if (z <= 4) return 14;
+  if (z <= 5) return 14;
+  if (z <= 6) return 13;
+  if (z <= 7) return 13;
+  if (z <= 8) return 12;
+  if (z <= 9) return 12;
+  if (z <= 10) return 11;
+  if (z <= 11) return 11;
+  if (z <= 12) return 10;
+  return 10; // keep local view readable
 }
 
 
@@ -1241,9 +1167,8 @@ pointToLayer: function(feature, latlng){
           }
         }
       }).addTo(hrrrTempLayer);
-      // If HRRR layer is currently visible, show outlines too
-      stateOutlineEnabled = map.hasLayer(hrrrTempLayer);
-      updateStateOutlines();
+      // If HRRR layer is currently visible, show state boundaries too
+      if (map.hasLayer(hrrrTempLayer)) { if (!map.hasLayer(stateLinesLayer)) stateLinesLayer.addTo(map); }
       updateHrrrTempRadius();
     })
     .catch(function(err){ console.log("HRRR temp load failed:", err); });
@@ -1268,32 +1193,25 @@ pointToLayer: function(feature, latlng){
     if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
     if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
   });
-  // Auto-show state outlines whenever HRRR Temp is enabled
-  map.on("overlayadd", function(e){
-    if (e.layer === hrrrTempLayer){
-      statesLayer.clearLayers();
-      statesGeo.addTo(statesLayer);
-      statesLayer.addTo(map);
-    }
-  });
-  map.on("overlayremove", function(e){
-    if (e.layer === hrrrTempLayer){
-      if (map.hasLayer(statesLayer)) map.removeLayer(statesLayer);
-      statesLayer.clearLayers();
-    }
-  });
-
+  
 
   // Reliable layer toggle handling (Leaflet provides e.layer, not e.name)
   map.on("overlayadd", function(e){
     if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
     if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
-    if (e.layer === hrrrTempLayer) { stateOutlineEnabled = true; updateStateOutlines(); updateProductLabel(); updateHrrrTempRadius(); }
+    if (e.layer === hrrrTempLayer) {
+      if (!map.hasLayer(stateLinesLayer)) stateLinesLayer.addTo(map);
+      updateProductLabel();
+      updateHrrrTempRadius();
+    }
   });
   map.on("overlayremove", function(e){
     if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
     if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
-    if (e.layer === hrrrTempLayer) { stateOutlineEnabled = false; updateStateOutlines(); updateProductLabel(); }
+    if (e.layer === hrrrTempLayer) {
+      if (map.hasLayer(stateLinesLayer)) map.removeLayer(stateLinesLayer);
+      updateProductLabel();
+    }
   });
 
   // Ensure radar checkbox starts ON
