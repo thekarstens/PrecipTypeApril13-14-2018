@@ -6,7 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="./leaflet.css"/>
-<script src="./leaflet.js"></script>
+<script src="./leaflet.js">
+var storyStarted = false; // do not auto-open storyboard
+</script>
 
 <style>
 html, body { height:100%; margin:0; }
@@ -276,7 +278,7 @@ body.student-mode .bstatus { display:none !important; }
 }
 .top-lesson{font-weight:900;font-size:26px;white-space:nowrap}
 .top-sep{opacity:.65;font-weight:900}
-.top-question{font-weight:800;font-size:16px;letter-spacing:.2px;text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.top-question{font-weight:800;font-size:16px;letter-spacing:.2px;text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;flex:1 1 100%;text-align:center}
 .top-q-label{font-weight:900;text-transform:uppercase;letter-spacing:.6px}
 
 .banner-bottomline{
@@ -600,8 +602,6 @@ body.student-mode .bstatus { display:none !important; }
 <img id="brandLogo" src="./logo.png" alt="Weather Workshops" />
 <script>
 (function(){
-  var storyStarted = false; // do not auto-open storyboard
-
   // ---------- Config ----------
   var STEP_HOURS = 3;
 
@@ -620,25 +620,6 @@ body.student-mode .bstatus { display:none !important; }
     L.latLng(50 + SHIFT_LAT,  -66 + SHIFT_LON)
   );
 
-
-  // --- GFS Snow Forecast (static PNGs) ---
-  // Pre-rendered images in the repo folder /gfs_snow/
-  var GFS_SNOW_BOUNDS = L.latLngBounds(
-    L.latLng(24.0, -125.0),   // SW corner
-    L.latLng(50.0,  -66.0)    // NE corner
-  );
-
-  function gfsSnowUrlFor(dateObj){
-    // Pick a run based on current timeline time (UTC)
-    var t = dateObj.getTime();
-    var t1 = Date.UTC(2018, 3, 12, 12, 0, 0); // 2018-04-12 12Z
-    var t2 = Date.UTC(2018, 3, 13, 12, 0, 0); // 2018-04-13 12Z
-    if (t <= t1) return "gfs_snow/gfs_20180411_00z_f96_snow_weatherbell.png";
-    if (t <= t2) return "gfs_snow/gfs_20180412_00z_f72_snow_weatherbell.png";
-    return "gfs_snow/gfs_20180413_00z_f48_snow_weatherbell.png";
-  }
-
-
   // Local file pattern in your repo:
   // radar_frames/n0q_201804141200.png, etc
   function pad2(n){ return (n<10?'0':'') + n; }
@@ -650,6 +631,21 @@ body.student-mode .bstatus { display:none !important; }
   }
   function radarUrlFor(d){
     return "radar_frames/n0q_" + yyyymmdd(d) + hhmm(d) + ".png";
+  }
+
+  // GFS snow forecast PNGs in repo (static frames)
+  // gfs_snow/gfs_20180411_00z_f96_snow_weatherbell.png
+  // gfs_snow/gfs_20180412_00z_f72_snow_weatherbell.png
+  // gfs_snow/gfs_20180413_00z_f48_snow_weatherbell.png
+  function gfsSnowUrlFor(d){
+    // Pick the most-relevant static forecast image for the current time.
+    // (We don't animate this yet; we just swap between a few key lead times.)
+    var t = d.getTime();
+    var t13 = Date.UTC(2018,3,13,0,0,0); // Apr 13 00Z
+    var t12 = Date.UTC(2018,3,12,0,0,0); // Apr 12 00Z
+    if (t >= t13) return "gfs_snow/gfs_20180413_00z_f48_snow_weatherbell.png";
+    if (t >= t12) return "gfs_snow/gfs_20180412_00z_f72_snow_weatherbell.png";
+    return "gfs_snow/gfs_20180411_00z_f96_snow_weatherbell.png";
   }
 
   // Alerts file pattern you already have:
@@ -1003,7 +999,6 @@ function applyRadarOpacity(){
   var v = parseInt(radarOpacity.value || "70", 10);
   var op = Math.max(0.2, Math.min(1, v/100));
   if (obsRadarOverlay && obsRadarEnabled) obsRadarOverlay.setOpacity(op);
-  if (gfsSnowOverlay && gfsSnowEnabled) gfsSnowOverlay.setOpacity(op);
 }
 if (radarOpacity){
   radarOpacity.oninput = applyRadarOpacity;
@@ -1036,6 +1031,10 @@ if (radarOpacity){
   // ---------- Layers ----------
   var obsRadarOverlay = null;
   var obsRadarEnabled = true;
+
+  // GFS Snow Forecast overlay (static PNG swapper)
+  var gfsSnowOverlay = null;
+  var gfsSnowEnabled = false;
 
   var alertsLayer = L.geoJSON(null, {
     filter: function(f){
@@ -1089,18 +1088,62 @@ if (radarOpacity){
   });
   alertsLayer.addTo(map);
   var alertsEnabled = true;
-var radarEnabled = true;   // Composite Radar (Observed)
-var gfsSnowEnabled = false; // GFS Snow Forecast (static PNG)
 
-  // Layer control (NO extra base layer picker)
+  
+
+  // --- HRRR Temp GeoJSON (single hour test) ---
+  var tempEnabled = false;
+  var tempLayer = L.layerGroup();   // toggled in Layer Control
+  var tempGeoLayer = null;          // actual GeoJSON points
+
+  function loadTempOnce(){
+    if (tempGeoLayer) return; // already loaded
+    fetch("./hrrr_t2m_20180414_12z_f00.geojson")
+      .then(r => { if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(gj => {
+        tempGeoLayer = L.geoJSON(gj, {
+          // IMPORTANT: convert lon 0..360 -> -180..180 if needed
+          coordsToLatLng: (coords) => {
+            let lon = coords[0], lat = coords[1];
+            if (lon > 180) lon = lon - 360;
+            return L.latLng(lat, lon);
+          },
+          pointToLayer: (f, latlng) => {
+            const t = (f.properties && f.properties.t_f != null) ? Number(f.properties.t_f) : NaN;
+
+            // simple bins (tweak later)
+            let fill = "#2b83ba";
+            if (t >= 32) fill = "#ffd166";
+            if (t >= 50) fill = "#fdae61";
+            if (t >= 70) fill = "#ef476f";
+
+            return L.circleMarker(latlng, { radius: 3, weight: 0, fillColor: fill, fillOpacity: 0.70 });
+          },
+          onEachFeature: (f, layer) => {
+            const t = (f.properties && f.properties.t_f != null) ? Number(f.properties.t_f).toFixed(1) : "NA";
+            layer.bindTooltip(`${t}°F`, { sticky: true });
+          }
+        });
+
+        if (tempEnabled) tempGeoLayer.addTo(tempLayer);
+      })
+      .catch(err => console.log("Temp load failed:", err));
+  }
+
+  function updateTemp(){
+    loadTempOnce();
+    tempLayer.clearLayers();
+    if (tempEnabled && tempGeoLayer) tempGeoLayer.addTo(tempLayer);
+  }
+
+// Layer control (NO extra base layer picker)
   // State boundary outline handled via GeoJSON (no labels)
 var overlays = {};
   overlays["Composite Radar (Observed)"] = L.layerGroup(); // placeholder group
-overlays["GFS Snow Forecast"] = L.layerGroup(); // placeholder group
-overlays["Composite Radar (Observed)"]._layerName = "Composite Radar (Observed)";
-overlays["GFS Snow Forecast"]._layerName = "GFS Snow Forecast";
 
+  overlays["GFS Snow Forecast"] = L.layerGroup(); // checkbox only; overlay managed manually
 
+  overlays["HRRR Temp (2m)"] = tempLayer; // GeoJSON points test
 // We'll manage radar ourselves but still expose a checkbox
   var lc = L.control.layers(null, overlays, { collapsed:false }).addTo(map);
 
@@ -1112,25 +1155,20 @@ overlays["GFS Snow Forecast"]._layerName = "GFS Snow Forecast";
 
   // Toggle handler for layer control checkboxes
   map.on("overlayadd", function(e){
-    var nm = e.name || (e.layer && e.layer._layerName) || "";
-    // When using Leaflet's layer control, event doesn't always include the name, so we also tag layers.
-    if (nm === "Composite Radar (Observed)" || e.layer === overlays["Composite Radar (Observed)"]) {
-      obsRadarEnabled = true; radarEnabled = true; updateRadar(); updateProductLabel();
-    }
-    if (nm === "GFS Snow Forecast" || e.layer === overlays["GFS Snow Forecast"]) {
-      gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel();
-    }
+    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
+    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = true; updateGfsSnow();     updateTemp();
+updateProductLabel(); }
+    if (e.layer === tempLayer) { tempEnabled = true; updateTemp(); updateProductLabel(); }
   });
+
   map.on("overlayremove", function(e){
-    var nm = e.name || (e.layer && e.layer._layerName) || "";
-    if (nm === "Composite Radar (Observed)" || e.layer === overlays["Composite Radar (Observed)"]) {
-      obsRadarEnabled = false; radarEnabled = false;
-      if (obsRadarOverlay){ try{ map.removeLayer(obsRadarOverlay);}catch(err){} }
-      updateProductLabel();
-    }
-    if (nm === "GFS Snow Forecast" || e.layer === overlays["GFS Snow Forecast"]) {
-      gfsSnowEnabled = false; removeGfsSnow(); updateProductLabel();
-    }
+    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
+    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
+    if (e.layer === tempLayer) { tempEnabled = false; updateTemp(); updateProductLabel(); }
+  });
+
+} updateProductLabel(); }
+    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
   });
 
   // Ensure radar checkbox starts ON
@@ -1152,14 +1190,21 @@ overlays["GFS Snow Forecast"]._layerName = "GFS Snow Forecast";
   }
 
   function updateProductLabel(){
-    // Keep the center label to ONE clean word (no piling)
-    var label = "RADAR";
-    if (gfsSnowEnabled && !obsRadarEnabled) label = "SNOW";
-    else if (ptypeEnabled && !obsRadarEnabled && !gfsSnowEnabled) label = "P-TYPE";
-    else if (obsRadarEnabled) label = "RADAR";
-    // (Later: if multiple layers are on, we can show "MULTI" or keep RADAR.)
+  var pl = document.getElementById("productLabel");
+  if (!pl) return;
 
-    productLabel.textContent = label;
+  // IMPORTANT: never concatenate labels (it will crowd the middle).
+  // Choose ONE label based on what is currently visible/active.
+  var candidates = [
+    { on: (typeof gfsSnowEnabled !== "undefined" && gfsSnowEnabled), label: "SNOW" },
+    { on: (typeof ptypeEnabled  !== "undefined" && ptypeEnabled),  label: "P-TYPE" },
+    { on: (typeof tempEnabled   !== "undefined" && tempEnabled),   label: "TEMP" },
+    { on: (typeof obsRadarEnabled !== "undefined" && obsRadarEnabled), label: "RADAR" }
+  ];
+
+  var label = "MAP";
+  for (var i=0;i<candidates.length;i++){
+    if (candidates[i].on){ label = candidates[i].label; break; }
   }
   pl.textContent = label;
 }
@@ -1185,36 +1230,24 @@ overlays["GFS Snow Forecast"]._layerName = "GFS Snow Forecast";
   }
 
   
-  // ----------------------------
-  // GFS Snow Forecast (static PNG overlay)
-  // ----------------------------
-  var gfsSnowOverlay = null;
-
-  function removeGfsSnow(){
-    if (gfsSnowOverlay){
-      try { map.removeLayer(gfsSnowOverlay); } catch(e){}
-      gfsSnowOverlay = null;
-    }
-  }
-
   function updateGfsSnow(){
-    if (!gfsSnowEnabled) { removeGfsSnow(); return; }
+    if (!gfsSnowEnabled) return;
 
     var url = gfsSnowUrlFor(curZ);
 
-    if (!gfsSnowOverlay){
-      gfsSnowOverlay = L.imageOverlay(url, GFS_SNOW_BOUNDS, {
-        opacity: (radarOpacity ? Math.max(0.2, Math.min(1, parseInt(radarOpacity.value||'70',10)/100)) : 0.7),
-        interactive: false,
-        pane: 'overlayPane'
-      }).addTo(map);
-      // When we first turn it on, gently frame to the bounds (but don't zoom way out)
-      try { map.fitBounds(GFS_SNOW_BOUNDS, {padding:[20,20]}); } catch(e){}
-    } else {
-      gfsSnowOverlay.setUrl(url);
-      var op = (radarOpacity ? Math.max(0.2, Math.min(1, parseInt(radarOpacity.value||'70',10)/100)) : 0.7);
-      gfsSnowOverlay.setOpacity(op);
-    }
+    // Preload to avoid flashing broken images
+    var img = new Image();
+    img.onload = function(){
+      if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); }
+      // Use same bounds as the rest of the CONUS layers for consistent alignment
+      gfsSnowOverlay = L.imageOverlay(url, RADAR_BOUNDS, { opacity: 0.75, interactive: false });
+      gfsSnowOverlay.addTo(map);
+      setStatus("GFS Snow: " + url);
+    };
+    img.onerror = function(){
+      setStatus("GFS Snow missing: " + url + " (check /gfs_snow/)");
+    };
+    img.src = url;
   }
 
 function updateAlerts(){
@@ -1237,7 +1270,9 @@ function updateAlerts(){
   function updateAll(){
     setTimeLabel();
     updateRadar();
+    updateGfsSnow();
     updateAlerts();
+    updateProductLabel();
   }
 
   // ---------- Time controls ----------
