@@ -670,6 +670,22 @@ body.student-mode .bstatus { display:none !important; }
 
   // ---------- Map ----------
   var map = L.map("map", { zoomControl:true }).setView([43.55, -96.73], 6);
+
+  // State outlines (shown only when HRRR Temp is enabled)
+  var stateOutlineEnabled = false;
+  var stateOutlineLayer = L.layerGroup();
+  var stateOutlineGeo = null;
+
+  function updateStateOutlines(){
+    if (stateOutlineEnabled){
+      if (!map.hasLayer(stateOutlineLayer)) stateOutlineLayer.addTo(map);
+      stateOutlineLayer.clearLayers();
+      if (stateOutlineGeo) stateOutlineGeo.addTo(stateOutlineLayer);
+    } else {
+      stateOutlineLayer.clearLayers();
+      if (map.hasLayer(stateOutlineLayer)) map.removeLayer(stateOutlineLayer);
+    }
+  }
   var zl = document.getElementById("zoomLabel"); if (zl) zl.textContent = map.getZoom();
   // Thicker state boundaries (no labels)
   (function(){
@@ -745,13 +761,14 @@ refreshCityLabels();
 
     const outlineUrl = "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/us-states.json";
     fetch(outlineUrl).then(r => r.json()).then(gj => {
-      L.geoJSON(gj, {
+      stateOutlineGeo = L.geoJSON(gj, {
         pane: "stateOutlinePane",
         interactive: false,
         style: { color: "#555", weight: 2.5, opacity: 0.7, fillOpacity: 0 }
-      }).addTo(map);
+      });
+      updateStateOutlines();
     }).catch(()=>{/* ignore if offline */});
-  })();
+})();
 
 
   // Clean base map (no labels)
@@ -1139,21 +1156,37 @@ function tempColor(tF){
 }
 
 function radiusForZoom(z){
+  // Keep overlap even when zoomed in (more "continuous field")
   if (z <= 4) return 10;
-  if (z <= 5) return 9;
-  if (z <= 6) return 8;
-  if (z <= 7) return 7;
-  if (z <= 8) return 6;
-  if (z <= 9) return 5;
-  return 4;
+  if (z <= 5) return 10;
+  if (z <= 6) return 9;
+  if (z <= 7) return 9;
+  if (z <= 8) return 8;
+  if (z <= 9) return 8;
+  if (z <= 10) return 7;
+  return 6;
 }
 
 function updateHrrrTempRadius(){
   if (!hrrrTempGeo) return;
-  var r = radiusForZoom(map.getZoom());
-  hrrrTempGeo.eachLayer(function(layer){
-    if (layer && layer.setRadius) layer.setRadius(r);
+  var z = map.getZoom();
+  var r = radiusForZoom(z);
+
+  hrrrTempGeo.eachLayer(function(layerOrGroup){
+    // Each feature returns a LayerGroup [base, core]
+    if (layerOrGroup && layerOrGroup.eachLayer){
+      layerOrGroup.eachLayer(function(l){
+        if (!l || !l.setRadius) return;
+        var isBase = (l.options && l.options.fillOpacity != null && l.options.fillOpacity < 0.7);
+        l.setRadius(isBase ? r : Math.max(2, Math.round(r * 0.35)));
+      });
+    } else if (layerOrGroup && layerOrGroup.setRadius){
+      layerOrGroup.setRadius(r);
+    }
   });
+}
+
+);
 }
 
 
@@ -1171,18 +1204,35 @@ function updateHrrrTempRadius(){
         
 pointToLayer: function(feature, latlng){
   var t = Number(feature.properties && feature.properties.t_f);
-  return L.circleMarker(latlng, {
-    radius: radiusForZoom(map.getZoom()),
+  var r = radiusForZoom(map.getZoom());
+  var c = tempColor(t);
+
+  // Two-layer dot: soft "field" base + sharp center dot (more scientific, still readable)
+  var base = L.circleMarker(latlng, {
+    radius: r,
     weight: 0,
-    fillColor: tempColor(t),
-    fillOpacity: 0.75
+    fillColor: c,
+    fillOpacity: 0.55
   });
+
+  var core = L.circleMarker(latlng, {
+    radius: Math.max(2, Math.round(r * 0.35)),
+    weight: 0.5,
+    color: "rgba(0,0,0,0.15)",
+    fillColor: c,
+    fillOpacity: 0.90
+  });
+
+  return L.layerGroup([base, core]);
 },
         onEachFeature: function(feature, layer){
           var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
           layer.bindTooltip(t + "°F", { sticky: true });
         }
       }).addTo(hrrrTempLayer);
+      // If HRRR layer is currently visible, show outlines too
+      stateOutlineEnabled = map.hasLayer(hrrrTempLayer);
+      updateStateOutlines();
       updateHrrrTempRadius();
     })
     .catch(function(err){ console.log("HRRR temp load failed:", err); });
@@ -1206,6 +1256,18 @@ pointToLayer: function(feature, latlng){
 
     if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
     if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
+  });
+
+  // Reliable layer toggle handling (Leaflet provides e.layer, not e.name)
+  map.on("overlayadd", function(e){
+    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
+    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
+    if (e.layer === hrrrTempLayer) { stateOutlineEnabled = true; updateStateOutlines(); updateProductLabel(); updateHrrrTempRadius(); }
+  });
+  map.on("overlayremove", function(e){
+    if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
+    if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
+    if (e.layer === hrrrTempLayer) { stateOutlineEnabled = false; updateStateOutlines(); updateProductLabel(); }
   });
 
   // Ensure radar checkbox starts ON
