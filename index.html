@@ -1121,6 +1121,20 @@ var overlays = {};
   var hrrrTempLayer = L.layerGroup();
   overlays["HRRR Temp (2m)"] = hrrrTempLayer;
 
+  // --- Simple state outlines (inline) ---
+  // These are simplified "box" outlines for teaching context (fast + reliable).
+  var statesLayer = L.layerGroup();
+
+  var STATES_OUTLINES_GEOJSON = {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"name": "South Dakota"}, "geometry": {"type": "Polygon", "coordinates": [[[-104.06, 42.48], [-96.44, 42.48], [-96.44, 45.95], [-104.06, 45.95], [-104.06, 42.48]]]}}, {"type": "Feature", "properties": {"name": "North Dakota"}, "geometry": {"type": "Polygon", "coordinates": [[[-104.05, 45.94], [-96.55, 45.94], [-96.55, 49.0], [-104.05, 49.0], [-104.05, 45.94]]]}}, {"type": "Feature", "properties": {"name": "Minnesota"}, "geometry": {"type": "Polygon", "coordinates": [[[-97.24, 43.5], [-89.49, 43.5], [-89.49, 49.38], [-97.24, 49.38], [-97.24, 43.5]]]}}, {"type": "Feature", "properties": {"name": "Iowa"}, "geometry": {"type": "Polygon", "coordinates": [[[-96.64, 40.37], [-90.14, 40.37], [-90.14, 43.5], [-96.64, 43.5], [-96.64, 40.37]]]}}, {"type": "Feature", "properties": {"name": "Nebraska"}, "geometry": {"type": "Polygon", "coordinates": [[[-104.05, 40.0], [-95.31, 40.0], [-95.31, 43.0], [-104.05, 43.0], [-104.05, 40.0]]]}}, {"type": "Feature", "properties": {"name": "Wyoming"}, "geometry": {"type": "Polygon", "coordinates": [[[-111.05, 41.0], [-104.05, 41.0], [-104.05, 45.0], [-111.05, 45.0], [-111.05, 41.0]]]}}, {"type": "Feature", "properties": {"name": "Montana"}, "geometry": {"type": "Polygon", "coordinates": [[[-116.05, 44.36], [-104.05, 44.36], [-104.05, 49.0], [-116.05, 49.0], [-116.05, 44.36]]]}}, {"type": "Feature", "properties": {"name": "Colorado"}, "geometry": {"type": "Polygon", "coordinates": [[[-109.05, 37.0], [-102.05, 37.0], [-102.05, 41.0], [-109.05, 41.0], [-109.05, 37.0]]]}}, {"type": "Feature", "properties": {"name": "Kansas"}, "geometry": {"type": "Polygon", "coordinates": [[[-102.05, 37.0], [-94.61, 37.0], [-94.61, 40.0], [-102.05, 40.0], [-102.05, 37.0]]]}}, {"type": "Feature", "properties": {"name": "Missouri"}, "geometry": {"type": "Polygon", "coordinates": [[[-95.77, 36.0], [-89.1, 36.0], [-89.1, 40.61], [-95.77, 40.61], [-95.77, 36.0]]]}}, {"type": "Feature", "properties": {"name": "Wisconsin"}, "geometry": {"type": "Polygon", "coordinates": [[[-92.89, 42.49], [-86.81, 42.49], [-86.81, 47.31], [-92.89, 47.31], [-92.89, 42.49]]]}}, {"type": "Feature", "properties": {"name": "Illinois"}, "geometry": {"type": "Polygon", "coordinates": [[[-91.51, 36.97], [-87.5, 36.97], [-87.5, 42.51], [-91.51, 42.51], [-91.51, 36.97]]]}}]};
+
+
+  var statesGeo = L.geoJSON(STATES_OUTLINES_GEOJSON, {
+    style: function(){
+      return { color: "rgba(0,0,0,0.55)", weight: 1.5, fillOpacity: 0 };
+    }
+  });
+
+
 
 // --- HRRR TEMP "blob map" styling helpers (Option 1) ---
 var hrrrTempGeo = null;
@@ -1130,35 +1144,17 @@ function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 
 // Smooth color ramp for temperature (F)
 function tempColor(tF){
-  // WeatherBell-ish temperature ramp (F): purple/blue -> cyan/green -> yellow/orange -> red/magenta
-  var stops = [
-    [-30, [120,  0,140]],  // purple
-    [-10, [ 40, 60,200]],  // deep blue
-    [  0, [  0,140,220]],  // blue-cyan
-    [ 10, [  0,200,180]],  // teal/green
-    [ 20, [120,240,120]],  // green
-    [ 32, [255,230, 90]],  // yellow (freezing highlight)
-    [ 40, [255,180, 70]],  // orange
-    [ 50, [255,120, 60]],  // deeper orange
-    [ 60, [235, 60, 60]],  // red
-    [ 80, [180,  0, 60]]   // magenta-red
-  ];
-  // clamp outside range
-  if (tF <= stops[0][0]) return "rgb(" + stops[0][1].join(",") + ")";
-  if (tF >= stops[stops.length-1][0]) return "rgb(" + stops[stops.length-1][1].join(",") + ")";
-
-  for (var i=0; i<stops.length-1; i++){
-    var aT = stops[i][0], bT = stops[i+1][0];
-    if (tF >= aT && tF <= bT){
-      var t = (tF - aT) / (bT - aT);
-      var a = stops[i][1], b = stops[i+1][1];
-      var r = Math.round(lerp(a[0], b[0], t));
-      var g = Math.round(lerp(a[1], b[1], t));
-      var bb = Math.round(lerp(a[2], b[2], t));
-      return "rgb(" + r + "," + g + "," + bb + ")";
-    }
-  }
-  return "rgb(40,60,200)";
+  // High-contrast, WeatherBell-like DISCRETE bins (F)
+  // 20s dark blue, 30s light blue, 40s dark green, 50s light green, 60s yellow, 70s orange, 80s red
+  if (tF < 20) return "rgb(8,48,107)";        // very cold: navy
+  if (tF < 30) return "rgb(8,81,156)";        // 20s: dark blue
+  if (tF < 40) return "rgb(107,174,214)";     // 30s: light blue
+  if (tF < 50) return "rgb(0,109,44)";        // 40s: dark green
+  if (tF < 60) return "rgb(116,196,118)";     // 50s: light green
+  if (tF < 70) return "rgb(255,235,59)";      // 60s: yellow
+  if (tF < 80) return "rgb(255,152,0)";       // 70s: orange
+  if (tF < 90) return "rgb(227,26,28)";       // 80s: red
+  return "rgb(197,27,138)";                   // 90s+: magenta
 }
 
 function radiusForZoom(z){
@@ -1172,8 +1168,9 @@ function radiusForZoom(z){
   if (z <= 10) return 9;
   if (z <= 11) return 9;
   if (z <= 12) return 8;
-  return 7;
+  return 7; // still large locally
 }
+
 
 function updateHrrrTempRadius(){
   if (!hrrrTempGeo) return;
@@ -1271,6 +1268,21 @@ pointToLayer: function(feature, latlng){
     if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
     if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
   });
+  // Auto-show state outlines whenever HRRR Temp is enabled
+  map.on("overlayadd", function(e){
+    if (e.layer === hrrrTempLayer){
+      statesLayer.clearLayers();
+      statesGeo.addTo(statesLayer);
+      statesLayer.addTo(map);
+    }
+  });
+  map.on("overlayremove", function(e){
+    if (e.layer === hrrrTempLayer){
+      if (map.hasLayer(statesLayer)) map.removeLayer(statesLayer);
+      statesLayer.clearLayers();
+    }
+  });
+
 
   // Reliable layer toggle handling (Leaflet provides e.layer, not e.name)
   map.on("overlayadd", function(e){
