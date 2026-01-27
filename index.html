@@ -539,7 +539,8 @@ body.student-mode .bstatus { display:none !important; }
 
   /* Ensure popups/tooltips render above boundary lines pane */
   .leaflet-tooltip-pane { z-index: 1200 !important; }
-  .leaflet-popup-pane   { z-index: 1300 !important; }
+  .leaflet-popup-pane   { z-index: 2000 !important; }
+  .leaflet-popup { z-index: 2001 !important; }
 
   /* HRRR pixel-query popup styling (bigger, bolder for students) */
   .hrrr-popup .leaflet-popup-content-wrapper{
@@ -1305,14 +1306,35 @@ function updateHrrrTempRadius(){
 
   var z = map.getZoom();
   var r = radiusForZoom(z);
+  var basePx = r * 2;
+  var corePx = Math.max(8, Math.round(basePx * 0.35));
+
+  function boundsFor(latlng, px){
+    var p = map.project(latlng, z);
+    var half = px/2;
+    var sw = map.unproject([p.x - half, p.y + half], z);
+    var ne = map.unproject([p.x + half, p.y - half], z);
+    return L.latLngBounds(sw, ne);
+  }
 
   hrrrTempGeo.eachLayer(function(layerOrGroup){
     // Each feature returns a LayerGroup [base, core]
     if (layerOrGroup && layerOrGroup.eachLayer){
       layerOrGroup.eachLayer(function(l){
-        if (!l || !l.setRadius) return;
+        if (!l) return;
         var role = (l.options && l.options._role) ? l.options._role : "base";
-        l.setRadius(role === "base" ? r : Math.max(2, Math.round(r * 0.22)));
+        var px = (role === "base") ? basePx : corePx;
+
+        // Square mode (rectangles)
+        if (l.setBounds && l._latlng){
+          l.setBounds(boundsFor(l._latlng, px));
+          return;
+        }
+
+        // Circle fallback (if any remain)
+        if (l.setRadius){
+          l.setRadius(role === "base" ? r : Math.max(2, Math.round(r * 0.22)));
+        }
       });
     } else if (layerOrGroup && layerOrGroup.setRadius){
       layerOrGroup.setRadius(r);
@@ -1333,33 +1355,50 @@ function updateHrrrTempRadius(){
         
 pointToLayer: function(feature, latlng){
   var t = Number(feature.properties && feature.properties.t_f);
-  var r = radiusForZoom(map.getZoom());
   var c = tempColor(t);
 
-  // Base "blob" for gradient field
-  var base = L.circleMarker(latlng, {
+  // Pixel-sized squares that we can grow with zoom (gives a TV-ish “filled field” zoomed out,
+  // but still readable/solid when zoomed in).
+  function boundsForPx(px){
+    var z = map.getZoom();
+    var p = map.project(latlng, z);
+    var half = px/2;
+    var sw = map.unproject([p.x - half, p.y + half], z);
+    var ne = map.unproject([p.x + half, p.y - half], z);
+    return L.latLngBounds(sw, ne);
+  }
+
+  var basePx = radiusForZoom(map.getZoom()) * 2; // convert "radius" idea to square size
+  var corePx = Math.max(8, Math.round(basePx * 0.35));
+
+  var base = L.rectangle(boundsForPx(basePx), {
     renderer: hrrrCanvas,
-    radius: r,
+    stroke: false,
     weight: 0,
     fillColor: c,
-    fillOpacity: 0.35,
-    _role: "base"
+    fillOpacity: 0.33,
+    _role: "base",
+    _px: basePx
   });
 
-  // Core dot for "sample point" feel (kept subtle so it doesn't look too polka-dot)
-  var core = L.circleMarker(latlng, {
+  var core = L.rectangle(boundsForPx(corePx), {
     renderer: hrrrCanvas,
-    radius: Math.max(2, Math.round(r * 0.18)),
+    stroke: false,
     weight: 0,
     fillColor: c,
     fillOpacity: 0.55,
-    _role: "core"
+    _role: "core",
+    _px: corePx
   });
 
+  // Track original point for resize
+  base._latlng = latlng;
+  core._latlng = latlng;
+
   var grp = L.layerGroup([base, core]);
-  // stash references so we can resize + bind tooltips correctly
   grp._base = base;
   grp._core = core;
+
   if (isFinite(t)) { hrrrPoints.push({lat: latlng.lat, lon: latlng.lng, tF: t}); }
   return grp;
 },
