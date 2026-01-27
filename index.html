@@ -327,8 +327,8 @@ body.student-mode .bstatus { display:none !important; }
 /* Map legend near logo */
 .map-legend{
   position:absolute;
-  right:26px;
-  bottom:92px;
+  right:190px;
+  bottom:26px;
   z-index:900;
   background:rgba(11,28,45,0.80);
   border:1px solid rgba(255,255,255,0.18);
@@ -691,7 +691,7 @@ body.student-mode .bstatus { display:none !important; }
 
   // --- State boundaries / outlines (GeoJSON first; tile fallback) ---
   map.createPane("lines");
-  map.getPane("lines").style.zIndex = 520;         // above dots, below popups         // above dots
+  map.getPane("lines").style.zIndex = 450;         // above dots, below popups         // above dots
   map.getPane("lines").style.pointerEvents = "none"; // keep clicks working
 
   var usStatesLayer = null;
@@ -1036,17 +1036,64 @@ if (modeBtn){
 // default to STUDENT mode
 setMode("student");
 
-// Radar opacity slider
+// Opacity slider (applies to the currently visible product)
 var radarOpacity = document.getElementById("radarOpacity");
-function applyRadarOpacity(){
+
+// Remember per-layer opacity so kids can flip products without losing their setting
+var productOpacity = { radar: 0.70, snow: 0.70, temp: 0.70 };
+
+function getActiveProductKey(){
+  // Priority: snow > temp > radar (matches your product label logic)
+  if (typeof gfsSnowEnabled !== "undefined" && gfsSnowEnabled) return "snow";
+  if (typeof hrrrTempLayer !== "undefined" && map.hasLayer(hrrrTempLayer)) return "temp";
+  return "radar";
+}
+
+function setTempOpacity(op){
+  if (!hrrrTempGeo) return;
+  // base halo is softer, core is stronger
+  var baseOp = Math.max(0.10, Math.min(0.85, op * 0.55));
+  var coreOp = Math.max(0.20, Math.min(1.00, op));
+
+  hrrrTempGeo.eachLayer(function(layerOrGroup){
+    if (layerOrGroup && layerOrGroup.eachLayer){
+      layerOrGroup.eachLayer(function(l){
+        if (!l || !l.setStyle) return;
+        var role = (l.options && l.options._role) ? l.options._role : "core";
+        l.setStyle({ fillOpacity: (role === "base") ? baseOp : coreOp });
+      });
+    }
+  });
+}
+
+function applyActiveOpacity(){
   if (!radarOpacity) return;
   var v = parseInt(radarOpacity.value || "70", 10);
   var op = Math.max(0.2, Math.min(1, v/100));
-  if (obsRadarOverlay && obsRadarEnabled) obsRadarOverlay.setOpacity(op);
+
+  var key = getActiveProductKey();
+  productOpacity[key] = op;
+
+  if (key === "radar"){
+    if (obsRadarOverlay && obsRadarEnabled) obsRadarOverlay.setOpacity(op);
+  } else if (key === "snow"){
+    if (gfsSnowOverlay && gfsSnowEnabled) gfsSnowOverlay.setOpacity(op);
+  } else if (key === "temp"){
+    setTempOpacity(op);
+  }
 }
+
+function syncOpacitySliderToActive(){
+  if (!radarOpacity) return;
+  var key = getActiveProductKey();
+  radarOpacity.value = Math.round((productOpacity[key] || 0.7) * 100);
+}
+
+// Wire slider
 if (radarOpacity){
-  radarOpacity.oninput = applyRadarOpacity;
+  radarOpacity.oninput = applyActiveOpacity;
 }
+
 
   // Story UI buttons
 
@@ -1241,16 +1288,16 @@ function tempColor(tF){
 
 function radiusForZoom(z){
   // Bigger dots as you zoom in (kids can “see the field” without tiny gaps).
-  // Tuned for ~3 km HRRR spacing: keep overlap at mid-zooms, and get noticeably larger at local zooms.
-  if (z <= 4)  return 18;
-  if (z <= 5)  return 20;
-  if (z <= 6)  return 22;
-  if (z <= 7)  return 24;
-  if (z <= 8)  return 28;
-  if (z <= 9)  return 32;
-  if (z <= 10) return 38;
-  if (z <= 11) return 44;
-  return 50; // z>=12
+  // Tuned for ~3 km HRRR spacing: overlap at mid-zooms, and get BIG at local zooms.
+  if (z <= 4)  return 22;
+  if (z <= 5)  return 26;
+  if (z <= 6)  return 30;
+  if (z <= 7)  return 34;
+  if (z <= 8)  return 40;
+  if (z <= 9)  return 48;
+  if (z <= 10) return 58;
+  if (z <= 11) return 70;
+  return 82; // z>=12
 }
 
 function updateHrrrTempRadius(){
@@ -1340,23 +1387,36 @@ pointToLayer: function(feature, latlng){
     if (el) el.style.display = "none";
   }, 50);
 
-  // Toggle handler for layer control checkboxes
-  map.on("overlayadd", function(e){
-
-    if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
-    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
-    if (e.name === "HRRR Temp (2m)") { addStateLines(); }
-  });
-  map.on("overlayremove", function(e){
-
-    if (e.name === "Composite Radar (Observed)") { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
-    if (e.name === "GFS Snow Forecast") { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); }
-    if (e.name === "HRRR Temp (2m)") { removeStateLines(); } updateProductLabel(); }
-  });
-  
-
   // Reliable layer toggle handling (Leaflet provides e.layer, not e.name)
-  map.on("overlayadd", function(e){
+  
+  function enforceSingleOverlay(layerAdded){
+    // Only one of the main products at a time (RADAR, SNOW, TEMP).
+    // State lines are driven by TEMP and are not part of this exclusivity.
+    var mainLayers = [
+      overlays["Composite Radar (Observed)"],
+      overlays["GFS Snow Forecast"],
+      hrrrTempLayer
+    ];
+
+    for (var i=0;i<mainLayers.length;i++){
+      var LYR = mainLayers[i];
+      if (!LYR) continue;
+      if (LYR === layerAdded) continue;
+      if (map.hasLayer(LYR)) map.removeLayer(LYR);
+    }
+
+    // Also ensure radar/snow overlays clean up if their checkbox was turned off by us
+    if (!map.hasLayer(overlays["Composite Radar (Observed)"])){
+      obsRadarEnabled = false;
+      if (obsRadarOverlay) map.removeLayer(obsRadarOverlay);
+    }
+    if (!map.hasLayer(overlays["GFS Snow Forecast"])){
+      gfsSnowEnabled = false;
+      if (gfsSnowOverlay) map.removeLayer(gfsSnowOverlay);
+    }
+  }
+map.on("overlayadd", function(e){
+    enforceSingleOverlay(e.layer);
     if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = true; updateRadar(); updateProductLabel(); }
     if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = true; updateGfsSnow(); updateProductLabel(); }
     if (e.layer === hrrrTempLayer) {
@@ -1364,7 +1424,11 @@ pointToLayer: function(feature, latlng){
       updateProductLabel();
       updateHrrrTempRadius();
     }
-  });
+  
+    syncOpacitySliderToActive();
+    applyActiveOpacity();
+    updateLegend();
+});
   map.on("overlayremove", function(e){
     if (e.layer === overlays["Composite Radar (Observed)"]) { obsRadarEnabled = false; if (obsRadarOverlay){ map.removeLayer(obsRadarOverlay); } updateProductLabel(); }
     if (e.layer === overlays["GFS Snow Forecast"]) { gfsSnowEnabled = false; if (gfsSnowOverlay){ map.removeLayer(gfsSnowOverlay); } updateProductLabel(); }
@@ -1385,6 +1449,10 @@ pointToLayer: function(feature, latlng){
       }
     }
   })();
+  // Sync UI for default layer
+  syncOpacitySliderToActive();
+  applyActiveOpacity();
+  updateLegend();
 
   // ---------- Updaters ----------
   function setStatus(s){ /* hidden */ }
@@ -1411,6 +1479,31 @@ pointToLayer: function(feature, latlng){
   }
   pl.textContent = label;
 }
+  function updateLegend(){
+    var el = document.getElementById("mapLegend");
+    if (!el) return;
+    var bar = el.querySelector(".leg-mini-bar");
+    var title = "";
+
+    var key = getActiveProductKey();
+    if (key === "radar"){
+      title = "Radar reflectivity";
+      if (bar) bar.style.background = "linear-gradient(90deg, #2b83ba, #4ecdc4, #a8e6a3, #ffd166, #ef476f)";
+      el.style.display = "";
+    } else if (key === "snow"){
+      title = "Snow (forecast)";
+      if (bar) bar.style.background = "linear-gradient(90deg, #ffffff, #d7ecff, #9ac8ff, #4f7cff)";
+      el.style.display = "";
+    } else { // temp
+      title = "2m Temperature (°F)";
+      // WeatherBell-ish continuous temp ramp (cold blues -> greens -> yellows -> oranges -> reds -> purples)
+      if (bar) bar.style.background = "linear-gradient(90deg, #0b2e83 0%, #1f66d3 15%, #6fb7ff 28%, #1f8a3a 42%, #7fe36d 52%, #ffe14a 63%, #ff9a1f 73%, #e31a1c 82%, #a4007c 92%, #ff66ff 100%)";
+      el.style.display = "";
+    }
+
+    el.title = title;
+  }
+
 
   function updateRadar(){
     if (!obsRadarEnabled) return;
@@ -1423,7 +1516,7 @@ pointToLayer: function(feature, latlng){
       var op = 0.70; var rs = document.getElementById("radarOpacity"); if (rs){ op = Math.max(0.2, Math.min(1, parseInt(rs.value||"70",10)/100)); }
       obsRadarOverlay = L.imageOverlay(url, RADAR_BOUNDS, { opacity: op, interactive:false });
       obsRadarOverlay.addTo(map);
-      applyRadarOpacity();
+      applyActiveOpacity();
       setStatus("Radar: " + url);
     };
     img.onerror = function(){
