@@ -1357,41 +1357,53 @@ pointToLayer: function(feature, latlng){
   var t = Number(feature.properties && feature.properties.t_f);
   var c = tempColor(t);
 
-  // Build a single solid-color square (avoids checkerboard look when zoomed in)
-  function boundsForPx(px){
+  // Convert a pixel-size at current zoom into lat/lng bounds around this grid point.
+  // We deliberately OVERLAP slightly to avoid the "checkerboard seams" when zoomed in.
+  function boundsFor(latlng, px){
     var z = map.getZoom();
     var p = map.project(latlng, z);
-    var half = px/2;
+    var pad = 2; // pixels of overlap (removes gaps/seams)
+    var half = (px + pad) / 2;
     var sw = map.unproject([p.x - half, p.y + half], z);
     var ne = map.unproject([p.x + half, p.y - half], z);
     return L.latLngBounds(sw, ne);
   }
 
-  var basePx = radiusForZoom(map.getZoom()) * 2; // square size in "pixels" at current zoom
+  // Square size scales with zoom, but we also add a soft "halo" square underneath
+  // to blend adjacent boxes and reduce the harsh checker pattern.
+  var basePx = Math.round(radiusForZoom(map.getZoom()) * 2.8);   // larger = more blended at local zoom
+  var corePx = Math.max(6, Math.round(basePx * 0.72));
 
-  var sq = L.rectangle(boundsForPx(basePx), {
+  var baseSq = L.rectangle(boundsFor(latlng, basePx), {
     renderer: hrrrCanvas,
     stroke: false,
     weight: 0,
     fillColor: c,
-    fillOpacity: 0.65,
-    _role: "base",
-    _px: basePx
+    fillOpacity: 0.22,
+    _role: "base"
   });
+  baseSq._latlng = latlng;
 
-  // Track original point for resize
-  sq._latlng = latlng;
+  var coreSq = L.rectangle(boundsFor(latlng, corePx), {
+    renderer: hrrrCanvas,
+    stroke: false,
+    weight: 0,
+    fillColor: c,
+    fillOpacity: 0.55,
+    _role: "core"
+  });
+  coreSq._latlng = latlng;
 
-  // Keep the layer-group structure so the rest of the code (opacity/tooltip/resize) stays stable
-  var grp = L.layerGroup([sq]);
-  grp._base = sq;
-  grp._core = sq;
+  var grp = L.layerGroup([baseSq, coreSq]);
+  grp._base = baseSq;
+  grp._core = coreSq;
 
   if (isFinite(t)) { hrrrPoints.push({lat: latlng.lat, lon: latlng.lng, tF: t}); }
   return grp;
 },
         onEachFeature: function(feature, layer){
-          var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
+          var raw = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f) : NaN;
+          var t = isFinite(raw) ? String(Math.round(raw)) : "NA";
           if (layer && layer._core && layer._core.bindTooltip){
             layer._core.bindTooltip(t + "°F", { sticky: true });
           } else if (layer && layer.bindTooltip){
