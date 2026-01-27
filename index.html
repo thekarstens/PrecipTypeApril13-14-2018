@@ -6,7 +6,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="./leaflet.css"/>
-<script src="./leaflet.js">
+<script src="./leaflet.js"></script>
+<script>
 var storyStarted = false; // do not auto-open storyboard
 </script>
 
@@ -690,7 +691,7 @@ body.student-mode .bstatus { display:none !important; }
 
   // --- State boundaries / outlines (GeoJSON first; tile fallback) ---
   map.createPane("lines");
-  map.getPane("lines").style.zIndex = 650;         // above dots, below popups         // above dots
+  map.getPane("lines").style.zIndex = 520;         // above dots, below popups         // above dots
   map.getPane("lines").style.pointerEvents = "none"; // keep clicks working
 
   var usStatesLayer = null;
@@ -1096,7 +1097,8 @@ if (radarOpacity){
       className: "hrrr-popup",
       autoPan: false,
       closeButton: false,
-      offset: [0, -6]
+      pane: "popupPane",
+      offset: [0, -10]
     })
     .setLatLng([best.lat, best.lon])
     .setContent(val + "°F")
@@ -1238,19 +1240,18 @@ function tempColor(tF){
 }
 
 function radiusForZoom(z){
-  // Goal: keep dots overlapping so there are NO "holes" when you zoom in.
-  // HRRR 3-km grid spacing means we need relatively big radii at higher zooms.
-  if (z <= 4) return 18;
-  if (z <= 5) return 18;
-  if (z <= 6) return 20;
-  if (z <= 7) return 22;
-  if (z <= 8) return 24;
-  if (z <= 9) return 26;
-  if (z <= 10) return 28;
-  if (z <= 11) return 30;
-  return 32;
+  // Bigger dots as you zoom in (kids can “see the field” without tiny gaps).
+  // Tuned for ~3 km HRRR spacing: keep overlap at mid-zooms, and get noticeably larger at local zooms.
+  if (z <= 4)  return 18;
+  if (z <= 5)  return 20;
+  if (z <= 6)  return 22;
+  if (z <= 7)  return 24;
+  if (z <= 8)  return 28;
+  if (z <= 9)  return 32;
+  if (z <= 10) return 38;
+  if (z <= 11) return 44;
+  return 50; // z>=12
 }
-
 
 function updateHrrrTempRadius(){
   if (!hrrrTempGeo) return;
@@ -1264,7 +1265,7 @@ function updateHrrrTempRadius(){
       layerOrGroup.eachLayer(function(l){
         if (!l || !l.setRadius) return;
         var role = (l.options && l.options._role) ? l.options._role : "base";
-        l.setRadius(role === "base" ? r : Math.max(2, Math.round(r * 0.35)));
+        l.setRadius(role === "base" ? r : Math.max(2, Math.round(r * 0.22)));
       });
     } else if (layerOrGroup && layerOrGroup.setRadius){
       layerOrGroup.setRadius(r);
@@ -1312,6 +1313,7 @@ pointToLayer: function(feature, latlng){
   // stash references so we can resize + bind tooltips correctly
   grp._base = base;
   grp._core = core;
+  if (isFinite(t)) { hrrrPoints.push({lat: latlng.lat, lon: latlng.lng, tF: t}); }
   return grp;
 },
         onEachFeature: function(feature, layer){
