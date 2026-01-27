@@ -1357,8 +1357,7 @@ pointToLayer: function(feature, latlng){
   var t = Number(feature.properties && feature.properties.t_f);
   var c = tempColor(t);
 
-  // Pixel-sized squares that we can grow with zoom (gives a TV-ish “filled field” zoomed out,
-  // but still readable/solid when zoomed in).
+  // Build a single solid-color square (avoids checkerboard look when zoomed in)
   function boundsForPx(px){
     var z = map.getZoom();
     var p = map.project(latlng, z);
@@ -1368,36 +1367,25 @@ pointToLayer: function(feature, latlng){
     return L.latLngBounds(sw, ne);
   }
 
-  var basePx = radiusForZoom(map.getZoom()) * 2; // convert "radius" idea to square size
-  var corePx = Math.max(8, Math.round(basePx * 0.35));
+  var basePx = radiusForZoom(map.getZoom()) * 2; // square size in "pixels" at current zoom
 
-  var base = L.rectangle(boundsForPx(basePx), {
+  var sq = L.rectangle(boundsForPx(basePx), {
     renderer: hrrrCanvas,
     stroke: false,
     weight: 0,
     fillColor: c,
-    fillOpacity: 0.33,
+    fillOpacity: 0.65,
     _role: "base",
     _px: basePx
   });
 
-  var core = L.rectangle(boundsForPx(corePx), {
-    renderer: hrrrCanvas,
-    stroke: false,
-    weight: 0,
-    fillColor: c,
-    fillOpacity: 0.55,
-    _role: "core",
-    _px: corePx
-  });
-
   // Track original point for resize
-  base._latlng = latlng;
-  core._latlng = latlng;
+  sq._latlng = latlng;
 
-  var grp = L.layerGroup([base, core]);
-  grp._base = base;
-  grp._core = core;
+  // Keep the layer-group structure so the rest of the code (opacity/tooltip/resize) stays stable
+  var grp = L.layerGroup([sq]);
+  grp._base = sq;
+  grp._core = sq;
 
   if (isFinite(t)) { hrrrPoints.push({lat: latlng.lat, lon: latlng.lng, tF: t}); }
   return grp;
