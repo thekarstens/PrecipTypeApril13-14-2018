@@ -536,34 +536,21 @@ body.student-mode .bstatus { display:none !important; }
 }
 
 
-/* HRRR pixel query tooltip */
-.leaflet-tooltip.hrrr-tip{
-  background: rgba(255,255,255,0.96);
-  border: 2px solid rgba(0,0,0,0.85);
-  color: #111;
-  font: 900 16px/1.1 Arial, sans-serif;
-  padding: 8px 12px;
-  border-radius: 10px;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.25);
-}
-.leaflet-tooltip.hrrr-tip:before{ border-top-color: rgba(0,0,0,0.85); }
+  /* Ensure popups/tooltips render above boundary lines pane */
+  .leaflet-tooltip-pane { z-index: 1200 !important; }
+  .leaflet-popup-pane   { z-index: 1300 !important; }
 
-/* Click-to-query popup (big, bold) */
-.leaflet-popup.hrrr-pixel-popup .leaflet-popup-content-wrapper{
-  background: rgba(255,255,255,0.97);
-  border: 2px solid rgba(0,0,0,0.9);
-  border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.28);
-}
-.leaflet-popup.hrrr-pixel-popup .leaflet-popup-content{
-  margin: 10px 14px;
-  font: 900 18px/1.15 Arial, sans-serif;
-  color:#111;
-}
-.leaflet-popup.hrrr-pixel-popup .leaflet-popup-tip{
-  background: rgba(255,255,255,0.97);
-  border: 2px solid rgba(0,0,0,0.9);
-}
+  /* HRRR pixel-query popup styling (bigger, bolder for students) */
+  .hrrr-popup .leaflet-popup-content-wrapper{
+    border-radius: 14px;
+    border: 2px solid rgba(0,0,0,0.35);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  }
+  .hrrr-popup .leaflet-popup-content{
+    margin: 12px 14px;
+    font: 900 18px/1.15 Arial, sans-serif;
+    letter-spacing: 0.2px;
+  }
 
 </style>
 </head>
@@ -703,7 +690,7 @@ body.student-mode .bstatus { display:none !important; }
 
   // --- State boundaries / outlines (GeoJSON first; tile fallback) ---
   map.createPane("lines");
-  map.getPane("lines").style.zIndex = 720;         // above dots
+  map.getPane("lines").style.zIndex = 650;         // above dots, below popups         // above dots
   map.getPane("lines").style.pointerEvents = "none"; // keep clicks working
 
   var usStatesLayer = null;
@@ -762,7 +749,61 @@ body.student-mode .bstatus { display:none !important; }
     { attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains:"abcd", maxZoom: 19 }
   ).addTo(map);
 
-  // Optional labels (kept on top to help students)
+  
+  // --- Extra Midwest city labels (shows more as you zoom in) ---
+  var cityLabelLayer = L.layerGroup().addTo(map);
+
+  function makeCityLabel(name, lat, lon){
+    return L.marker([lat, lon], {
+      interactive: false,
+      icon: L.divIcon({
+        className: "town-label",
+        html: name,
+        iconSize: null
+      })
+    });
+  }
+
+  var CITIES_TIER1 = [
+    ["Sioux Falls", 43.5446, -96.7311],
+    ["Minneapolis", 44.9778, -93.2650],
+    ["Des Moines", 41.5868, -93.6250],
+    ["Omaha", 41.2565, -95.9345],
+    ["Kansas City", 39.0997, -94.5786],
+    ["Rapid City", 44.0805, -103.2310],
+    ["Denver", 39.7392, -104.9903]
+  ];
+
+  var CITIES_TIER2 = [
+    ["Fargo", 46.8772, -96.7898],
+    ["Bismarck", 46.8083, -100.7837],
+    ["Pierre", 44.3683, -100.3510],
+    ["Brookings", 44.3114, -96.7984],
+    ["Watertown", 44.8994, -97.1150],
+    ["Rochester", 44.0121, -92.4802],
+    ["Sioux City", 42.4990, -96.4003],
+    ["Lincoln", 40.8136, -96.7026],
+    ["St. Louis", 38.6270, -90.1994],
+    ["Madison", 43.0731, -89.4012],
+    ["Milwaukee", 43.0389, -87.9065],
+    ["Chicago", 41.8781, -87.6298]
+  ];
+
+  function updateCityLabels(){
+    var z = map.getZoom();
+    cityLabelLayer.clearLayers();
+
+    if (z >= 4){
+      CITIES_TIER1.forEach(function(c){ cityLabelLayer.addLayer(makeCityLabel(c[0], c[1], c[2])); });
+    }
+    if (z >= 6){
+      CITIES_TIER2.forEach(function(c){ cityLabelLayer.addLayer(makeCityLabel(c[0], c[1], c[2])); });
+    }
+  }
+  map.on("zoomend", updateCityLabels);
+  updateCityLabels();
+
+// Optional labels (kept on top to help students)
   var labels = L.tileLayer(
     "https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png",
     { attribution: "", subdomains:"abcd", maxZoom: 19, pane: "overlayPane" }
@@ -1029,9 +1070,37 @@ if (radarOpacity){
   map.on("zoomend", updateHrrrTempRadius);
 
 
-  map.on("click", function(){
+  map.on("click", function(e){
     var lp = document.getElementById("legendPop");
     if (lp) lp.classList.add("hidden");
+
+    // Pixel query (click) for HRRR temp: show nearest grid point value
+    if (!map.hasLayer(hrrrTempLayer)) return;
+    if (!hrrrPoints || hrrrPoints.length === 0) return;
+
+    var lat = e.latlng.lat, lon = e.latlng.lng;
+    var best = null, bestD = Infinity;
+    var coslat = Math.cos(lat * Math.PI/180);
+
+    for (var i=0; i<hrrrPoints.length; i++){
+      var p = hrrrPoints[i];
+      var dlat = (p.lat - lat);
+      var dlon = (p.lon - lon) * coslat;
+      var d2 = dlat*dlat + dlon*dlon;
+      if (d2 < bestD){ bestD = d2; best = p; }
+    }
+    if (!best) return;
+
+    var val = Math.round(best.tF); // whole degrees
+    L.popup({
+      className: "hrrr-popup",
+      autoPan: false,
+      closeButton: false,
+      offset: [0, -6]
+    })
+    .setLatLng([best.lat, best.lon])
+    .setContent(val + "°F")
+    .openOn(map);
   });
 
   // ---------- Layers ----------
@@ -1109,45 +1178,8 @@ var overlays = {};
 
 // --- HRRR TEMP "blob map" styling helpers (Option 1) ---
 var hrrrTempGeo = null;
+var hrrrPoints = []; // [{lat, lon, tF}] for pixel query
 var hrrrCanvas = L.canvas({ padding: 0.5 });
-
-// Store HRRR points for click-to-query
-var hrrrPts = [];
-var hrrrPixelPopup = L.popup({ closeButton:false, autoPan:false, className:"hrrr-pixel-popup" });
-function buildHrrrPts(gj){
-  try{
-    hrrrPts = (gj.features||[]).map(function(f){
-      var coords = f.geometry && f.geometry.coordinates;
-      if (!coords) return null;
-      var lon = coords[0], lat = coords[1];
-      if (lon > 180) lon = lon - 360;
-      var t = (f.properties && f.properties.t_f != null) ? Math.round(Number(f.properties.t_f)) : null;
-      return (isFinite(lat) && isFinite(lon) && t!=null) ? {lat:lat, lon:lon, t:t} : null;
-    }).filter(Boolean);
-  }catch(e){ hrrrPts = []; }
-}
-function nearestHrrr(lat, lon){
-  if (!hrrrPts || !hrrrPts.length) return null;
-  var cosLat = Math.cos(lat * Math.PI/180);
-  var best = null, bestD = Infinity;
-  for (var i=0; i<hrrrPts.length; i++){
-    var p = hrrrPts[i];
-    var dx = (p.lon - lon) * cosLat;
-    var dy = (p.lat - lat);
-    var d2 = dx*dx + dy*dy;
-    if (d2 < bestD){ bestD = d2; best = p; }
-  }
-  return best;
-}
-// Click anywhere to query nearest HRRR gridpoint (only when HRRR layer is on)
-map.on("click", function(e){
-  if (!map.hasLayer(hrrrTempLayer)) return;
-  var n = nearestHrrr(e.latlng.lat, e.latlng.lng);
-  if (!n) return;
-  var html = "<div>" + n.t + "°F</div>";
-  hrrrPixelPopup.setLatLng(e.latlng).setContent(html).openOn(map);
-});
-
 
 function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
@@ -1222,6 +1254,7 @@ function radiusForZoom(z){
 
 function updateHrrrTempRadius(){
   if (!hrrrTempGeo) return;
+
   var z = map.getZoom();
   var r = radiusForZoom(z);
 
@@ -1230,22 +1263,18 @@ function updateHrrrTempRadius(){
     if (layerOrGroup && layerOrGroup.eachLayer){
       layerOrGroup.eachLayer(function(l){
         if (!l || !l.setRadius) return;
-        var isBase = (l.options && l.options.fillOpacity != null && l.options.fillOpacity < 0.7);
-        l.setRadius(isBase ? r : Math.max(2, Math.round(r * 0.35)));
+        var role = (l.options && l.options._role) ? l.options._role : "base";
+        l.setRadius(role === "base" ? r : Math.max(2, Math.round(r * 0.35)));
       });
     } else if (layerOrGroup && layerOrGroup.setRadius){
       layerOrGroup.setRadius(r);
     }
   });
 }
-
-
-
   // Load once (GeoJSON must be in same folder as this index.html)
   fetch("./hrrr_t2m_20180414_12z_f00.geojson")
     .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(function(gj){
-      buildHrrrPts(gj);
       hrrrTempGeo = L.geoJSON(gj, {
         // IMPORTANT: convert 0..360 longitudes -> -180..180 for Leaflet
         coordsToLatLng: function(coords){
@@ -1265,7 +1294,8 @@ pointToLayer: function(feature, latlng){
     radius: r,
     weight: 0,
     fillColor: c,
-    fillOpacity: 0.35
+    fillOpacity: 0.35,
+    _role: "base"
   });
 
   // Core dot for "sample point" feel (kept subtle so it doesn't look too polka-dot)
@@ -1274,7 +1304,8 @@ pointToLayer: function(feature, latlng){
     radius: Math.max(2, Math.round(r * 0.18)),
     weight: 0,
     fillColor: c,
-    fillOpacity: 0.55
+    fillOpacity: 0.55,
+    _role: "core"
   });
 
   var grp = L.layerGroup([base, core]);
@@ -1284,11 +1315,11 @@ pointToLayer: function(feature, latlng){
   return grp;
 },
         onEachFeature: function(feature, layer){
-          var t = (feature.properties && feature.properties.t_f != null) ? Math.round(Number(feature.properties.t_f)) : null;
+          var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
           if (layer && layer._core && layer._core.bindTooltip){
-            layer._core.bindTooltip((t!=null ? (t + "°F") : "NA"), { sticky: true, className: "hrrr-tip" });
+            layer._core.bindTooltip(t + "°F", { sticky: true });
           } else if (layer && layer.bindTooltip){
-            layer.bindTooltip((t!=null ? (t + "°F") : "NA"), { sticky: true, className: "hrrr-tip" });
+            layer.bindTooltip(t + "°F", { sticky: true });
           }
         }
       }).addTo(hrrrTempLayer);
