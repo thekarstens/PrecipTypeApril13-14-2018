@@ -554,6 +554,25 @@ body.student-mode .bstatus { display:none !important; }
     letter-spacing: 0.2px;
   }
 
+
+/* Pixel query tooltip/popup */
+.leaflet-tooltip.pixel-tooltip{
+  background: rgba(255,255,255,0.95);
+  color:#111;
+  border:2px solid rgba(0,0,0,0.35);
+  border-radius:10px;
+  padding:10px 12px;
+  box-shadow:0 6px 18px rgba(0,0,0,0.25);
+}
+.leaflet-popup.pixel-popup .leaflet-popup-content-wrapper{
+  background: rgba(255,255,255,0.95);
+  border:2px solid rgba(0,0,0,0.35);
+  border-radius:12px;
+  box-shadow:0 6px 18px rgba(0,0,0,0.25);
+}
+.leaflet-popup.pixel-popup .leaflet-popup-content{
+  margin:10px 12px;
+}
 </style>
 </head>
 
@@ -1364,11 +1383,14 @@ function updateHrrrTempRadius(){
   }
 
   hrrrTempGeo.eachLayer(function(layer){
-    if (layer && layer._isHrrrCell && layer._latlng){
-      var px = squarePx(layer._latlng);
-      layer.setBounds(boundsFor(layer._latlng, px));
-    }
-  });
+  if (layer && layer._isHrrrCell && layer._latlng){
+    var px = squarePx(layer._latlng);
+    var r = Math.max(2, Math.min(18, px * 0.55));
+    if (layer.setRadius) layer.setRadius(r);
+    // keep opacity in sync (when slider changes or layer toggled)
+    if (layer.setStyle) layer.setStyle({ fillOpacity: hrrrOpacity });
+  }
+});
 }
   // Load once (GeoJSON must be in same folder as this index.html)
   fetch("./hrrr_t2m_20180414_12z_f00.geojson")
@@ -1422,26 +1444,35 @@ pointToLayer: function(feature, latlng){
 
   var px = squarePxForZoom(map.getZoom());
 
-  var sq = L.rectangle(boundsFor(latlng, px), {
-    renderer: hrrrCanvas,
-    stroke: false,
-    weight: 0,
-    fillColor: c,
-    fillOpacity: (productOpacity && productOpacity.temp!=null) ? productOpacity.temp : 0.7,
-    interactive: true
-  });
-  sq._latlng = latlng;     // for resize on zoom
-  sq._tF = t;              // for quick tooltip refresh if needed
-  sq._isHrrrCell = true;
+// Use circles (not rectangles) to avoid the "checkerboard" seams when zooming.
+// Radius scales with zoom so the field stays continuous-ish at close range.
+var r = Math.max(2, Math.min(18, px * 0.55));
 
-  // Build the pixel-query tooltip on hover
-  var raw = isFinite(t) ? Math.round(t) : null;
-  if (raw !== null){
-    sq.bindTooltip(raw + "°F", { sticky: true, direction: "top", opacity: 0.97, className: "tempTooltip" });
+var sq = L.circleMarker(latlng, {
+  renderer: hrrrCanvas,
+  radius: r,
+  stroke: false,
+  fillColor: colorForTempF(t),
+  fillOpacity: hrrrOpacity
+});
+
+sq._latlng = latlng;
+sq._value = t;
+sq._isHrrrCell = true;
+
+// Pixel-query: tooltip on desktop, popup on mobile (hover doesn't exist).
+var raw = isFinite(t) ? Math.round(t) : null;
+if (raw !== null) {
+  var html = '<div style="font-weight:800;font-size:20px;line-height:1.1;">' + raw + '&deg;F</div>';
+  if (L.Browser.mobile) {
+    sq.bindPopup(html, { closeButton: false, offset: [0, -6], className: 'pixel-popup' });
+  } else {
+    sq.bindTooltip(html, { direction: 'top', sticky: true, opacity: 0.95, className: 'pixel-tooltip' });
   }
+}
 
-  if (isFinite(t)) { hrrrPoints.push({lat: latlng.lat, lon: latlng.lng, tF: t}); }
-  return sq;
+if (isFinite(t)) { hrrrPoints.push([latlng.lng, latlng.lat, t]); }
+return sq;
 },
         onEachFeature: function(feature, layer){
           var raw = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f) : NaN;
