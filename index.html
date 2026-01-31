@@ -1127,7 +1127,7 @@ if (radarOpacity){
   });
 
   // Keep HRRR temp blobs sized appropriately as you zoom
-  map.on("zoomend", updateHrrrTempRadius);
+  map.on("zoomend", updateHrrrCircleStyles);
 
 
   map.on("click", function(e){
@@ -1135,7 +1135,7 @@ if (radarOpacity){
     if (lp) lp.classList.add("hidden");
 
     // Pixel query (click) for HRRR temp: show nearest grid point value
-    if (!map.hasLayer(hrrrTempLayer)) return;
+    if (!(hrrrTempLayer && map.hasLayer(hrrrTempLayer))) return;
     if (!hrrrPoints || hrrrPoints.length === 0) return;
 
     var lat = e.latlng.lat, lon = e.latlng.lng;
@@ -1298,6 +1298,18 @@ function tempColor(tF){
   }
   return rgbToCss(TEMP_STOPS[TEMP_STOPS.length-1].c);
 }
+
+function updateHrrrCircleStyles(){
+  if (!hrrrTempLayer) return;
+  var z = map.getZoom();
+  var r = Math.max(6, Math.min(22, 4 + (z - 4) * 2.2));
+  var op = (typeof hrrrOpacity === 'number' ? hrrrOpacity : 0.55);
+  hrrrTempLayer.eachLayer(function(layer){
+    if (layer && layer.setRadius) layer.setRadius(r);
+    if (layer && layer.setStyle) layer.setStyle({fillOpacity: op});
+  });
+}
+
 function computeGridStepFromGeoJSON(gj){
   // Estimate native grid spacing in degrees using a subset of points.
   // We look for the minimum positive delta in unique latitudes/longitudes.
@@ -1471,7 +1483,7 @@ if (raw !== null) {
   }
 }
 
-if (isFinite(t)) { hrrrPoints.push([latlng.lng, latlng.lat, t]); }
+if (isFinite(t)) { hrrrPoints.push({lon:latlng.lng, lat:latlng.lat, tF:t}); }
 return sq;
 },
         onEachFeature: function(feature, layer){
