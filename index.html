@@ -539,8 +539,7 @@ body.student-mode .bstatus { display:none !important; }
 
   /* Ensure popups/tooltips render above boundary lines pane */
   .leaflet-tooltip-pane { z-index: 1200 !important; }
-  .leaflet-popup-pane   { z-index: 2000 !important; }
-  .leaflet-popup { z-index: 2001 !important; }
+  .leaflet-popup-pane   { z-index: 1300 !important; }
 
   /* HRRR pixel-query popup styling (bigger, bolder for students) */
   .hrrr-popup .leaflet-popup-content-wrapper{
@@ -554,25 +553,6 @@ body.student-mode .bstatus { display:none !important; }
     letter-spacing: 0.2px;
   }
 
-
-/* Pixel query tooltip/popup */
-.leaflet-tooltip.pixel-tooltip{
-  background: rgba(255,255,255,0.95);
-  color:#111;
-  border:2px solid rgba(0,0,0,0.35);
-  border-radius:10px;
-  padding:10px 12px;
-  box-shadow:0 6px 18px rgba(0,0,0,0.25);
-}
-.leaflet-popup.pixel-popup .leaflet-popup-content-wrapper{
-  background: rgba(255,255,255,0.95);
-  border:2px solid rgba(0,0,0,0.35);
-  border-radius:12px;
-  box-shadow:0 6px 18px rgba(0,0,0,0.25);
-}
-.leaflet-popup.pixel-popup .leaflet-popup-content{
-  margin:10px 12px;
-}
 </style>
 </head>
 
@@ -1071,9 +1051,17 @@ function getActiveProductKey(){
 
 function setTempOpacity(op){
   if (!hrrrTempGeo) return;
-  hrrrTempGeo.eachLayer(function(layer){
-    if (layer && layer._isHrrrCell){
-      layer.setStyle({ fillOpacity: op });
+  // base halo is softer, core is stronger
+  var baseOp = Math.max(0.10, Math.min(0.85, op * 0.55));
+  var coreOp = Math.max(0.20, Math.min(1.00, op));
+
+  hrrrTempGeo.eachLayer(function(layerOrGroup){
+    if (layerOrGroup && layerOrGroup.eachLayer){
+      layerOrGroup.eachLayer(function(l){
+        if (!l || !l.setStyle) return;
+        var role = (l.options && l.options._role) ? l.options._role : "core";
+        l.setStyle({ fillOpacity: (role === "base") ? baseOp : coreOp });
+      });
     }
   });
 }
@@ -1127,7 +1115,7 @@ if (radarOpacity){
   });
 
   // Keep HRRR temp blobs sized appropriately as you zoom
-  map.on("zoomend", updateHrrrCircleStyles);
+  map.on("zoomend", updateHrrrTempRadius);
 
 
   map.on("click", function(e){
@@ -1135,7 +1123,7 @@ if (radarOpacity){
     if (lp) lp.classList.add("hidden");
 
     // Pixel query (click) for HRRR temp: show nearest grid point value
-    if (!(hrrrTempLayer && map.hasLayer(hrrrTempLayer))) return;
+    if (!map.hasLayer(hrrrTempLayer)) return;
     if (!hrrrPoints || hrrrPoints.length === 0) return;
 
     var lat = e.latlng.lat, lon = e.latlng.lng;
@@ -1242,7 +1230,6 @@ var hrrrTempGeo = null;
 var hrrrPoints = []; // [{lat, lon, tF}] for pixel query
 var hrrrCanvas = L.canvas({ padding: 0.5 });
 
-var hrrrGridStep = null; // computed from HRRR GeoJSON spacing (degrees)
 function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 
@@ -1299,57 +1286,6 @@ function tempColor(tF){
   return rgbToCss(TEMP_STOPS[TEMP_STOPS.length-1].c);
 }
 
-function updateHrrrCircleStyles(){
-  if (!hrrrTempLayer) return;
-  var z = map.getZoom();
-  var r = Math.max(6, Math.min(22, 4 + (z - 4) * 2.2));
-  var op = (typeof ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70) === 'number' ? ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70) : 0.55);
-  hrrrTempLayer.eachLayer(function(layer){
-    if (layer && layer.setRadius) layer.setRadius(r);
-    if (layer && layer.setStyle) layer.setStyle({fillOpacity: op});
-  });
-}
-
-function computeGridStepFromGeoJSON(gj){
-  // Estimate native grid spacing in degrees using a subset of points.
-  // We look for the minimum positive delta in unique latitudes/longitudes.
-  try{
-    var feats = (gj && gj.features) ? gj.features : [];
-    var n = Math.min(feats.length, 1200);
-    var lats = [];
-    var lons = [];
-    for (var i=0;i<n;i++){
-      var f = feats[i];
-      if (!f || !f.geometry || f.geometry.type !== "Point") continue;
-      var coords = f.geometry.coordinates;
-      if (!coords || coords.length < 2) continue;
-      var lon = Number(coords[0]), lat = Number(coords[1]);
-      if (!isFinite(lat) || !isFinite(lon)) continue;
-      // round to reduce floating jitter
-      lats.push(Math.round(lat*10000)/10000);
-      lons.push(Math.round(lon*10000)/10000);
-    }
-    lats = Array.from(new Set(lats)).sort(function(a,b){return a-b;});
-    lons = Array.from(new Set(lons)).sort(function(a,b){return a-b;});
-    function minDiff(arr){
-      var md = Infinity;
-      for (var i=1;i<arr.length;i++){
-        var d = arr[i]-arr[i-1];
-        if (d>0 && d<md) md = d;
-      }
-      return md;
-    }
-    var dLat = minDiff(lats);
-    var dLon = minDiff(lons);
-    if (!isFinite(dLat) || !isFinite(dLon) || dLat===Infinity || dLon===Infinity){
-      return null;
-    }
-    return { dLat: dLat, dLon: dLon };
-  }catch(e){
-    return null;
-  }
-}
-
 function radiusForZoom(z){
   // Bigger dots as you zoom in (kids can “see the field” without tiny gaps).
   // Tuned for ~3 km HRRR spacing: overlap at mid-zooms, and get BIG at local zooms.
@@ -1367,42 +1303,21 @@ function radiusForZoom(z){
 function updateHrrrTempRadius(){
   if (!hrrrTempGeo) return;
 
-  // Make squares match the native grid spacing at the current zoom
-  // and overlap slightly to eliminate visible seams/gaps.
   var z = map.getZoom();
+  var r = radiusForZoom(z);
 
-  function squarePx(latlng){
-    if (!hrrrGridStep || !isFinite(hrrrGridStep.dLat) || !isFinite(hrrrGridStep.dLon)){
-      return Math.max(10, Math.round(radiusForZoom(z) * 3.2));
+  hrrrTempGeo.eachLayer(function(layerOrGroup){
+    // Each feature returns a LayerGroup [base, core]
+    if (layerOrGroup && layerOrGroup.eachLayer){
+      layerOrGroup.eachLayer(function(l){
+        if (!l || !l.setRadius) return;
+        var role = (l.options && l.options._role) ? l.options._role : "base";
+        l.setRadius(role === "base" ? r : Math.max(2, Math.round(r * 0.22)));
+      });
+    } else if (layerOrGroup && layerOrGroup.setRadius){
+      layerOrGroup.setRadius(r);
     }
-    var p0 = map.project(latlng, z);
-    var pLat = map.project([latlng.lat + hrrrGridStep.dLat, latlng.lng], z);
-    var pLon = map.project([latlng.lat, latlng.lng + hrrrGridStep.dLon], z);
-    var dLatPx = Math.abs(pLat.y - p0.y);
-    var dLonPx = Math.abs(pLon.x - p0.x);
-    var step = Math.max(dLatPx, dLonPx);
-    var px = step * 1.08;
-    px = Math.max(8, Math.min(220, px));
-    return px;
-  }
-
-  function boundsFor(latlng, px){
-    var p = map.project(latlng, z);
-    var half = px/2;
-    var sw = map.unproject([p.x - half, p.y + half], z);
-    var ne = map.unproject([p.x + half, p.y - half], z);
-    return L.latLngBounds(sw, ne);
-  }
-
-  hrrrTempGeo.eachLayer(function(layer){
-  if (layer && layer._isHrrrCell && layer._latlng){
-    var px = squarePx(layer._latlng);
-    var r = Math.max(2, Math.min(18, px * 0.55));
-    if (layer.setRadius) layer.setRadius(r);
-    // keep opacity in sync (when slider changes or layer toggled)
-    if (layer.setStyle) layer.setStyle({ fillOpacity: ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70) });
-  }
-});
+  });
 }
   // Load once (GeoJSON must be in same folder as this index.html)
   fetch("./hrrr_t2m_20180414_12z_f00.geojson")
@@ -1418,77 +1333,38 @@ function updateHrrrTempRadius(){
         
 pointToLayer: function(feature, latlng){
   var t = Number(feature.properties && feature.properties.t_f);
+  var r = radiusForZoom(map.getZoom());
   var c = tempColor(t);
 
-  // Compute the "native" grid spacing in pixels for the current zoom, then make each
-  // square slightly larger than the spacing so we never see gaps when zooming in.
-  function squarePxForZoom(z){
-    // Fallback if we haven't computed grid spacing yet
-    if (!hrrrGridStep || !isFinite(hrrrGridStep.dLat) || !isFinite(hrrrGridStep.dLon)){
-      return Math.max(10, Math.round(radiusForZoom(z) * 3.2));
-    }
-    var p0 = map.project(latlng, z);
+  // Base "blob" for gradient field
+  var base = L.circleMarker(latlng, {
+    renderer: hrrrCanvas,
+    radius: r,
+    weight: 0,
+    fillColor: c,
+    fillOpacity: 0.35,
+    _role: "base"
+  });
 
-    // Use local lat for lon spacing (projection-aware), but keep it simple.
-    var pLat = map.project([latlng.lat + hrrrGridStep.dLat, latlng.lng], z);
-    var pLon = map.project([latlng.lat, latlng.lng + hrrrGridStep.dLon], z);
+  // Core dot for "sample point" feel (kept subtle so it doesn't look too polka-dot)
+  var core = L.circleMarker(latlng, {
+    renderer: hrrrCanvas,
+    radius: Math.max(2, Math.round(r * 0.18)),
+    weight: 0,
+    fillColor: c,
+    fillOpacity: 0.55,
+    _role: "core"
+  });
 
-    var dLatPx = Math.abs(pLat.y - p0.y);
-    var dLonPx = Math.abs(pLon.x - p0.x);
-
-    // Some grids have slightly different spacing in x vs y; take the larger.
-    var step = Math.max(dLatPx, dLonPx);
-
-    // Overlap factor prevents seams. Clamp to avoid absurd sizes if step goes weird.
-    var px = step * 1.08;
-    px = Math.max(8, Math.min(220, px));
-    return Math.round(px);
-  }
-
-  function boundsFor(latlng, px){
-    var z = map.getZoom();
-    var p = map.project(latlng, z);
-    var half = px / 2;
-    var sw = map.unproject([p.x - half, p.y + half], z);
-    var ne = map.unproject([p.x + half, p.y - half], z);
-    return L.latLngBounds(sw, ne);
-  }
-
-  var px = squarePxForZoom(map.getZoom());
-
-// Use circles (not rectangles) to avoid the "checkerboard" seams when zooming.
-// Radius scales with zoom so the field stays continuous-ish at close range.
-var r = Math.max(2, Math.min(18, px * 0.55));
-
-var sq = L.circleMarker(latlng, {
-  renderer: hrrrCanvas,
-  radius: r,
-  stroke: false,
-  fillColor: colorForTempF(t),
-  fillOpacity: ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70)
-});
-
-sq._latlng = latlng;
-sq._value = t;
-sq._isHrrrCell = true;
-
-// Pixel-query: tooltip on desktop, popup on mobile (hover doesn't exist).
-var raw = isFinite(t) ? Math.round(t) : null;
-if (raw !== null) {
-  var html = '<div style="font-weight:800;font-size:20px;line-height:1.1;">' + raw + '&deg;F</div>';
-  if (L.Browser.mobile) {
-    sq.bindPopup(html, { closeButton: false, offset: [0, -6], className: 'pixel-popup' });
-  } else {
-    sq.bindTooltip(html, { direction: 'top', sticky: true, opacity: 0.95, className: 'pixel-tooltip' });
-  }
-}
-
-if (isFinite(t)) { hrrrPoints.push({lon:latlng.lng, lat:latlng.lat, tF:t}); }
-return sq;
+  var grp = L.layerGroup([base, core]);
+  // stash references so we can resize + bind tooltips correctly
+  grp._base = base;
+  grp._core = core;
+  if (isFinite(t)) { hrrrPoints.push({lat: latlng.lat, lon: latlng.lng, tF: t}); }
+  return grp;
 },
         onEachFeature: function(feature, layer){
-          var raw = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f) : NaN;
-          var t = isFinite(raw) ? String(Math.round(raw)) : "NA";
+          var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
           if (layer && layer._core && layer._core.bindTooltip){
             layer._core.bindTooltip(t + "°F", { sticky: true });
           } else if (layer && layer.bindTooltip){
