@@ -1303,7 +1303,7 @@ function updateHrrrCircleStyles(){
   if (!hrrrTempLayer) return;
   var z = map.getZoom();
   var r = Math.max(6, Math.min(22, 4 + (z - 4) * 2.2));
-  var op = (typeof hrrrOpacity === 'number' ? hrrrOpacity : 0.55);
+  var op = (typeof ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70) === 'number' ? ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70) : 0.55);
   hrrrTempLayer.eachLayer(function(layer){
     if (layer && layer.setRadius) layer.setRadius(r);
     if (layer && layer.setStyle) layer.setStyle({fillOpacity: op});
@@ -1400,7 +1400,7 @@ function updateHrrrTempRadius(){
     var r = Math.max(2, Math.min(18, px * 0.55));
     if (layer.setRadius) layer.setRadius(r);
     // keep opacity in sync (when slider changes or layer toggled)
-    if (layer.setStyle) layer.setStyle({ fillOpacity: hrrrOpacity });
+    if (layer.setStyle) layer.setStyle({ fillOpacity: ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70) });
   }
 });
 }
@@ -1465,7 +1465,7 @@ var sq = L.circleMarker(latlng, {
   radius: r,
   stroke: false,
   fillColor: colorForTempF(t),
-  fillOpacity: hrrrOpacity
+  fillOpacity: ((typeof productOpacity !== 'undefined' && productOpacity.temp != null) ? productOpacity.temp : 0.70)
 });
 
 sq._latlng = latlng;
