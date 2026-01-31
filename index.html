@@ -1320,63 +1320,59 @@ function updateHrrrTempRadius(){
   });
 }
   // Load once (GeoJSON must be in same folder as this index.html)
-  fetch("./hrrr_t2m_20180414_12z_f00.geojson")
-    .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(function(gj){
-      hrrrTempGeo = L.geoJSON(gj, {
-        // IMPORTANT: convert 0..360 longitudes -> -180..180 for Leaflet
-        coordsToLatLng: function(coords){
-          var lon = coords[0], lat = coords[1];
-          if (lon > 180) lon = lon - 360;
-          return L.latLng(lat, lon);
-        },
-        
-pointToLayer: function(feature, latlng){
-  var t = Number(feature.properties && feature.properties.t_f);
-  var r = radiusForZoom(map.getZoom());
-  var c = tempColor(t);
+    // HRRR Temp (2m): we have two different GeoJSON grids in the repo.
+  // We'll automatically load whichever file is closest to the current timeline time (curZ).
+  var HRRR_T2M_SOURCES = [
+    { t: Date.UTC(2018, 3, 12, 21, 0, 0), url: "./hrrr_t2m_20180412_21z_f00.geojson" }, // Apr 12 21Z
+    { t: Date.UTC(2018, 3, 14, 12, 0, 0), url: "./hrrr_t2m_20180414_12z_f00.geojson" }  // Apr 14 12Z
+  ];
 
-  // Base "blob" for gradient field
-  var base = L.circleMarker(latlng, {
-    renderer: hrrrCanvas,
-    radius: r,
-    weight: 0,
-    fillColor: c,
-    fillOpacity: 0.35,
-    _role: "base"
-  });
+  function hrrrUrlForTime(d){
+    var ms = d.getTime();
+    var best = HRRR_T2M_SOURCES[0];
+    var bestDiff = Math.abs(ms - best.t);
+    for (var i=1; i<HRRR_T2M_SOURCES.length; i++){
+      var diff = Math.abs(ms - HRRR_T2M_SOURCES[i].t);
+      if (diff < bestDiff){ best = HRRR_T2M_SOURCES[i]; bestDiff = diff; }
+    }
+    return best.url;
+  }
 
-  // Core dot for "sample point" feel (kept subtle so it doesn't look too polka-dot)
-  var core = L.circleMarker(latlng, {
-    renderer: hrrrCanvas,
-    radius: Math.max(2, Math.round(r * 0.18)),
-    weight: 0,
-    fillColor: c,
-    fillOpacity: 0.55,
-    _role: "core"
-  });
+  var currentHrrrUrl = null;
 
-  var grp = L.layerGroup([base, core]);
-  // stash references so we can resize + bind tooltips correctly
-  grp._base = base;
-  grp._core = core;
-  if (isFinite(t)) { hrrrPoints.push({lat: latlng.lat, lon: latlng.lng, tF: t}); }
-  return grp;
-},
-        onEachFeature: function(feature, layer){
-          var t = (feature.properties && feature.properties.t_f != null) ? Number(feature.properties.t_f).toFixed(1) : "NA";
-          if (layer && layer._core && layer._core.bindTooltip){
-            layer._core.bindTooltip(t + "°F", { sticky: true });
-          } else if (layer && layer.bindTooltip){
-            layer.bindTooltip(t + "°F", { sticky: true });
+  function loadHrrrTempForCurrentTime(){
+    var url = hrrrUrlForTime(curZ);
+    if (url === currentHrrrUrl && hrrrTempGeo){ return; }
+    currentHrrrUrl = url;
+
+    // remove old layer if present
+    if (hrrrTempGeo){
+      hrrrTempLayer.removeLayer(hrrrTempGeo);
+      hrrrTempGeo = null;
+    }
+    hrrrPoints = [];
+
+    fetch(url)
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        hrrrTempGeo = L.geoJSON(data, {
+          pointToLayer: function(feature, latlng){
+            var t = feature.properties && (feature.properties.temp_f ?? feature.properties.temp ?? feature.properties.value);
+            // store for pixel query
+            hrrrPoints.push({ latlng: latlng, temp: t });
+            return L.circleMarker(latlng, hrrrStyle(t));
           }
-        }
-      }).addTo(hrrrTempLayer);
-      // If HRRR layer is currently visible, show state boundaries too
-      if (map.hasLayer(hrrrTempLayer)) { addStateLines(); }
-      updateHrrrTempRadius();
-    })
-    .catch(function(err){ console.log("HRRR temp load failed:", err); });
+        });
+        hrrrTempLayer.addLayer(hrrrTempGeo);
+
+        // apply opacity + zoom sizing immediately
+        setLayerOpacity(hrrrTempLayer, currentOpacity);
+        updateHrrrTempRadius();
+      })
+      .catch(function(err){
+        console.log("HRRR temp load failed:", err, url);
+      });
+  }
 
 // We'll manage radar ourselves but still expose a checkbox
   var lc = L.control.layers(null, overlays, { collapsed:false }).addTo(map);
@@ -1422,6 +1418,7 @@ map.on("overlayadd", function(e){
     if (e.layer === hrrrTempLayer) {
       addStateLines();
       updateProductLabel();
+      loadHrrrTempForCurrentTime();
       updateHrrrTempRadius();
     }
   
@@ -1569,6 +1566,9 @@ function updateAlerts(){
     updateGfsSnow();
     updateAlerts();
     updateProductLabel();
+    if (map.hasLayer(hrrrTempLayer)) {
+      loadHrrrTempForCurrentTime();
+    }
   }
 
   // ---------- Time controls ----------
